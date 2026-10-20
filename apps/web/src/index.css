@@ -2017,6 +2017,16 @@ code {
   font-weight: 600;
 }
 
+/* Prototype for an inline code text color theme setting. Hardcoded blue until
+   the setting exists. */
+:root {
+  --inline-code-foreground: oklch(0.55 0.19 257);
+
+  @variant dark {
+    --inline-code-foreground: oklch(0.74 0.13 250);
+  }
+}
+
 .chat-markdown :not(pre) > code {
   border: 1px solid var(--contrast-border);
   border-radius: 0.375rem;
@@ -2024,7 +2034,7 @@ code {
   -webkit-box-decoration-break: clone;
   background: var(--muted);
   padding: 0.1rem 0.35rem;
-  color: var(--contrast-foreground);
+  color: var(--inline-code-foreground, var(--contrast-foreground));
   font-size: 0.75rem;
 }
 
