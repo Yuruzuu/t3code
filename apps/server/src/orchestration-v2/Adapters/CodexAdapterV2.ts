@@ -54,6 +54,7 @@ import type {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2FileChangeDetail,
   ModelSelection,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
@@ -176,6 +177,15 @@ function codexFileChangeLineStats(
     case "update":
       return countDiffLineStats(change.diff.split("\n"));
   }
+}
+
+function codexFileChangeDetail(
+  change: CodexSchema.V2ItemCompletedNotification__FileUpdateChange,
+): OrchestrationV2FileChangeDetail {
+  const movePath = change.kind.type === "update" ? change.kind.move_path : null;
+  return movePath
+    ? { operation: "move", path: movePath, oldPath: change.path }
+    : { operation: change.kind.type, path: change.path };
 }
 
 function codexFileChangeApprovalPrompt(input: {
@@ -3656,6 +3666,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               fileName: firstChange.path,
               diffStr: firstChange.diff,
               ...sumFileChangeLineStats(item.changes.map(codexFileChangeLineStats)),
+              ...(item.changes.length > 1
+                ? { changes: item.changes.map(codexFileChangeDetail) }
+                : {}),
             };
             return { node, turnItem };
           },
