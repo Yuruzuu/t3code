@@ -7,6 +7,7 @@ import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
   resolveWorkEntryToolPresentation,
+  toolGroupDiffStat,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -16,7 +17,7 @@ import {
 
 function commandItem(
   fields: Partial<Extract<OrchestrationV2TurnItem, { type: "command_execution" }>> = {},
-): OrchestrationV2TurnItem {
+): Extract<OrchestrationV2TurnItem, { type: "command_execution" }> {
   return {
     id: TurnItemId.make("command"),
     threadId: ThreadId.make("thread"),
@@ -242,5 +243,36 @@ describe("command work-log details", () => {
         data: { command: "pnpm test" },
       }),
     ).toBe(false);
+  });
+});
+
+describe("toolGroupDiffStat", () => {
+  function fileChangeEntry(
+    id: string,
+    stats: { additions?: number; deletions?: number },
+  ): WorkLogPresentationEntry {
+    const { input: _input, exitCode: _exitCode, ...base } = commandItem();
+    return {
+      id,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      label: "Changed file",
+      tone: "tool",
+      itemType: "file_change",
+      structuredPayload: { ...base, type: "file_change", fileName: `${id}.ts`, ...stats },
+    };
+  }
+
+  it("sums the line counts of every edit in the group", () => {
+    expect(
+      toolGroupDiffStat([
+        fileChangeEntry("a", { additions: 40, deletions: 2 }),
+        fileChangeEntry("b", { additions: 2, deletions: 6 }),
+        { id: "c", createdAt: "2026-01-01T00:00:00.000Z", label: "Ran", tone: "tool" },
+      ]),
+    ).toEqual({ additions: 42, deletions: 8 });
+  });
+
+  it("returns null when no edit reported line counts", () => {
+    expect(toolGroupDiffStat([fileChangeEntry("a", {})])).toBeNull();
   });
 });

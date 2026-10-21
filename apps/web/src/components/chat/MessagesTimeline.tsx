@@ -6,6 +6,7 @@ import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipel
 import { MarkdownFindContext, findRevealRef } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
+import { DiffStatLabel } from "./DiffStatLabel";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
@@ -3983,6 +3984,7 @@ function WorkGroupToggleTimelineRow({
       iconName={row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
+      diffStat={row.diffStat}
       expanded={row.expanded}
       createdAt={row.createdAt}
       timestampFormat={ctx.timestampFormat}
@@ -3997,6 +3999,7 @@ function WorkGroupHeader(props: {
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean | undefined;
   active?: boolean | undefined;
+  diffStat?: { additions: number; deletions: number } | undefined;
   expanded: boolean;
   createdAt: string;
   timestampFormat: TimestampFormat;
@@ -4005,7 +4008,14 @@ function WorkGroupHeader(props: {
   return (
     <WorkLogButton
       ref={props.active && !props.failed ? observeVisibleAnimation : undefined}
-      aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
+      aria-label={[
+        props.label,
+        props.diffStat &&
+          `${props.diffStat.additions} additions, ${props.diffStat.deletions} deletions`,
+        props.failed && "tool call failed",
+      ]
+        .filter(Boolean)
+        .join(", ")}
       aria-expanded={props.expanded}
       onClick={props.onToggle}
       icon={
@@ -4017,8 +4027,18 @@ function WorkGroupHeader(props: {
         />
       }
       label={
-        <span className={cn("block truncate", props.active && !props.failed && "live-tool-shine")}>
-          {props.label}
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className={cn("truncate", props.active && !props.failed && "live-tool-shine")}>
+            {props.label}
+          </span>
+          {props.diffStat ? (
+            <DiffStatLabel
+              additions={props.diffStat.additions}
+              deletions={props.diffStat.deletions}
+              layout="inline"
+              className="shrink-0 text-xs"
+            />
+          ) : null}
         </span>
       }
       trailing={

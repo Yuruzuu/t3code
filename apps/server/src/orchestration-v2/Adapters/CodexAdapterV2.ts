@@ -1,5 +1,11 @@
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import {
+  countDiffLineStats,
+  countTextLines,
+  type FileChangeLineStats,
+  sumFileChangeLineStats,
+} from "./fileChangeLineStats.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -157,6 +163,20 @@ export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER
 type CodexFileChangeKinds = Readonly<
   Record<string, CodexSchema.V2ItemStartedNotification__PatchChangeKind>
 >;
+
+// Codex sends the whole file as `diff` for adds and deletes, and a unified diff for updates.
+function codexFileChangeLineStats(
+  change: CodexSchema.V2ItemCompletedNotification__FileUpdateChange,
+): FileChangeLineStats {
+  switch (change.kind.type) {
+    case "add":
+      return { additions: countTextLines(change.diff), deletions: 0 };
+    case "delete":
+      return { additions: 0, deletions: countTextLines(change.diff) };
+    case "update":
+      return countDiffLineStats(change.diff.split("\n"));
+  }
+}
 
 function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
@@ -3635,6 +3655,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               type: "file_change",
               fileName: firstChange.path,
               diffStr: firstChange.diff,
+              ...sumFileChangeLineStats(item.changes.map(codexFileChangeLineStats)),
             };
             return { node, turnItem };
           },

@@ -18,6 +18,7 @@ import {
   normalizeCompactToolLabel,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
+  toolGroupDiffStat,
   toolGroupAction,
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
@@ -560,6 +561,7 @@ type MessagesTimelineRowContent =
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
       summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
+      diffStat?: { additions: number; deletions: number };
       hasFailure: boolean;
     }
   | {
@@ -1730,6 +1732,7 @@ export function deriveMessagesTimelineRows(input: {
           const summaryToolIcon = usesSingleToolCallLabel
             ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
             : undefined;
+          const diffStat = toolGroupDiffStat(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -1747,6 +1750,7 @@ export function deriveMessagesTimelineRows(input: {
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
             ...(summaryToolIcon ? { summaryToolIcon } : {}),
+            ...(diffStat ? { diffStat } : {}),
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),

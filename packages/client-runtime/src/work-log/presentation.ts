@@ -734,6 +734,21 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
 }
 
+/** Lines added and removed by the group's file edits, or null when no edit reported counts. */
+export function toolGroupDiffStat(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): { additions: number; deletions: number } | null {
+  let additions = 0;
+  let deletions = 0;
+  for (const entry of entries) {
+    const item = entry.structuredPayload;
+    if (item?.type !== "file_change") continue;
+    additions += item.additions ?? 0;
+    deletions += item.deletions ?? 0;
+  }
+  return additions > 0 || deletions > 0 ? { additions, deletions } : null;
+}
+
 export function toolGroupSummaryKind(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): ToolGroupSummaryKind {

@@ -1,6 +1,11 @@
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
+  countDiffLineStats,
+  countTextLines,
+  type FileChangeLineStats,
+} from "./fileChangeLineStats.ts";
+import {
   dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
@@ -2461,6 +2466,32 @@ function claudeNativeToolOutputFromStructuredResult(input: {
   };
 }
 
+// Edit and Write results carry a `structuredPatch`; a Write that creates a file has no hunks.
+function claudeFileChangeLineStats(
+  output: ClaudeNativeToolOutput,
+): FileChangeLineStats | undefined {
+  if (output.type !== "structured_tool_use_result") return undefined;
+  const value = output.value;
+  if (typeof value !== "object" || value === null) return undefined;
+  const patch = Reflect.get(value, "structuredPatch");
+  if (!Array.isArray(patch)) return undefined;
+  const content = Reflect.get(value, "content");
+  if (
+    patch.length === 0 &&
+    Reflect.get(value, "type") === "create" &&
+    typeof content === "string"
+  ) {
+    return { additions: countTextLines(content), deletions: 0 };
+  }
+  const lines = patch.flatMap((hunk) => {
+    const hunkLines = typeof hunk === "object" && hunk !== null ? Reflect.get(hunk, "lines") : null;
+    return Array.isArray(hunkLines)
+      ? hunkLines.filter((line): line is string => typeof line === "string")
+      : [];
+  });
+  return countDiffLineStats(lines);
+}
+
 function claudeNativeToolOutputValue(output: ClaudeNativeToolOutput): unknown | undefined {
   switch (output.type) {
     case "none":
@@ -4854,6 +4885,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     type: "file_change",
                     fileName: fileNameFromClaudeTool(input.toolName, input.toolInput),
                     ...(outputText.length === 0 ? {} : { diffStr: outputText }),
+                    ...claudeFileChangeLineStats(input.output),
                   }
                 : itemType === "web_search"
                   ? {
