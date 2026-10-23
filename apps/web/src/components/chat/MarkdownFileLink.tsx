@@ -11,17 +11,15 @@ import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
 import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
-import { ContextChip } from "../ContextChip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { FileTagChipContent } from "./FileTagChip";
 import {
   hasMarkdownFilePrimaryAction,
   markdownFileCopyMenuItems,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./MarkdownFileLink.logic";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
-import { WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
+import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 
 interface MarkdownFileLinkProps {
   environmentId: EnvironmentId | null;
@@ -31,6 +29,7 @@ interface MarkdownFileLinkProps {
   workspaceRelativePath: string | null;
   panelPath: string | null;
   line?: number | undefined;
+  column?: number | undefined;
   label: string;
   copyMarkdown: string;
   theme: "light" | "dark";
@@ -46,6 +45,14 @@ interface MarkdownFileLinkProps {
 }
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
+// Blends into the prose: link color without weight, a faint underline, and a muted icon that
+// takes its file-type color on hover. The position is inline-block so the underline skips it.
+const FILE_LINK_CLASS_NAME =
+  "group inline-flex max-w-full cursor-pointer items-baseline gap-[0.33em] rounded-xs align-baseline text-info-foreground focus-visible:outline-1 focus-visible:outline-ring [&>svg]:size-3.5 [&>svg]:self-center [&>svg]:opacity-60 [&>svg]:grayscale hover:[&>svg]:opacity-100 hover:[&>svg]:grayscale-0";
+const FILE_LINK_LABEL_CLASS_NAME =
+  "min-w-0 truncate underline decoration-info-foreground/35 decoration-1 underline-offset-3 transition-colors group-hover:decoration-info-foreground motion-reduce:transition-none";
+const FILE_LINK_POSITION_CLASS_NAME = "ms-1.5 inline-block tabular-nums opacity-65";
+const FILE_LINK_POSITION_PREFIX = "line ";
 
 export const MarkdownFileLink = memo(function MarkdownFileLink({
   environmentId,
@@ -55,6 +62,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   workspaceRelativePath,
   panelPath,
   line,
+  column,
   label,
   copyMarkdown,
   theme,
@@ -320,17 +328,31 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInBrowser,
     canOpenInPanel,
   });
+  const position = line ? `${line}${column ? `:${column}` : ""}` : null;
+  const content = (
+    <>
+      <WorkspaceEntryIcon path={iconPath} environmentId={environmentId} theme={theme} />
+      <span className={FILE_LINK_LABEL_CLASS_NAME}>
+        {label}
+        {position ? (
+          <span className={FILE_LINK_POSITION_CLASS_NAME}>
+            {FILE_LINK_POSITION_PREFIX}
+            {position}
+          </span>
+        ) : null}
+      </span>
+    </>
+  );
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           hasPrimaryAction ? (
-            <ContextChip
-              kind="mention"
+            <a
+              href={href}
               dir="ltr"
-              render={<a href={href} />}
-              className={MARKDOWN_FILE_LINK_CLASS_NAME}
+              className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, FILE_LINK_CLASS_NAME)}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
                 event.preventDefault();
@@ -347,32 +369,21 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               }}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent
-                path={iconPath}
-                environmentId={environmentId}
-                label={label}
-                theme={theme}
-              />
-            </ContextChip>
+              {content}
+            </a>
           ) : (
-            <ContextChip
-              kind="mention"
+            <button
+              type="button"
               dir="ltr"
-              render={<button type="button" />}
               aria-label={`File options for ${label}`}
               aria-haspopup="menu"
-              className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
+              className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, FILE_LINK_CLASS_NAME, "select-text")}
               data-markdown-copy={copyMarkdown}
               onClick={handleContextMenu}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent
-                path={iconPath}
-                environmentId={environmentId}
-                label={label}
-                theme={theme}
-              />
-            </ContextChip>
+              {content}
+            </button>
           )
         }
       />
@@ -397,6 +408,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
+    previous.column === next.column &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
