@@ -265,10 +265,25 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(ttl(env, null));
     assert.isUndefined(ttl(env, "fork"));
     assert.equal(ttl({ ...env, CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, "subagent"), "1h");
-    assert.strictEqual(
-      ClaudeAdapterV2.claudeQueryEnvironment(env, lineage("subagent"), undefined),
-      env,
+    assert.isUndefined(
+      ClaudeAdapterV2.claudeQueryEnvironment(env, lineage("subagent"), undefined)
+        .CLAUDE_CODE_PROMPT_CACHE_TTL,
     );
+  });
+
+  it("turns on Claude's task tools unless the instance environment opts out", () => {
+    const lineage = {
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: ThreadId.make("thread-root"),
+      },
+    };
+    const todoTools = (environment: NodeJS.ProcessEnv) =>
+      ClaudeAdapterV2.claudeQueryEnvironment(environment, lineage, undefined)
+        .CLAUDE_CODE_ENABLE_TODO_TOOLS;
+    assert.equal(todoTools({ PATH: "/bin" }), "1");
+    assert.equal(todoTools({ PATH: "/bin", CLAUDE_CODE_ENABLE_TODO_TOOLS: "0" }), "0");
   });
 
   it("projects AskUserQuestion input with question text as the answer key", () => {

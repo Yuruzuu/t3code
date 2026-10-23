@@ -1264,22 +1264,31 @@ function claudeLiveSelectionFlagSettings(
   };
 }
 
+// Claude Code leaves its task tools (TaskCreate, TaskUpdate, TaskList) out of SDK sessions
+// unless CLAUDE_CODE_ENABLE_TODO_TOOLS is set; the CLI has them on by default. The adapter
+// turns those calls into the thread's todo list.
+//
 // A delegated child is its own SDK session, so Claude Code gives it the main-conversation cache
 // TTL. When the user sets Claude's subagentPromptCacheTtl, the child follows it like a native
-// subagent would. An explicit CLAUDE_CODE_PROMPT_CACHE_TTL on the instance still wins.
+// subagent would.
+//
+// Explicit values on the instance environment win over both.
 export function claudeQueryEnvironment(
   environment: NodeJS.ProcessEnv,
   appThread: Pick<OrchestrationV2AppThread, "lineage">,
   subagentPromptCacheTtl: "5m" | "1h" | undefined,
 ): NodeJS.ProcessEnv {
-  if (
-    appThread.lineage.relationshipToParent !== "subagent" ||
-    subagentPromptCacheTtl === undefined ||
-    environment.CLAUDE_CODE_PROMPT_CACHE_TTL !== undefined
-  ) {
-    return environment;
-  }
-  return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
+  const promptCacheTtl =
+    appThread.lineage.relationshipToParent === "subagent" &&
+    subagentPromptCacheTtl !== undefined &&
+    environment.CLAUDE_CODE_PROMPT_CACHE_TTL === undefined
+      ? { CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl }
+      : {};
+  return {
+    CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
+    ...environment,
+    ...promptCacheTtl,
+  };
 }
 
 export function makeClaudeQueryOptions(input: {
