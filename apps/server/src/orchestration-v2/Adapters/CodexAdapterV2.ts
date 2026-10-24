@@ -1,6 +1,7 @@
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { unifiedDiffLineCounts } from "./fileChangeMetadata.ts";
 import {
   mcpToolPresentation,
   type McpToolPresentation,
@@ -3588,6 +3589,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return null;
             }
 
+            const counts = item.changes.map((change) => unifiedDiffLineCounts(change.diff));
+            // One patch can touch several files; each keeps its own diff so clients can show it.
+            const perFile = item.changes.length > 1;
+            const changes = item.changes.map(({ path, kind, diff }, index) => ({
+              ...(kind.type === "update" && kind.move_path
+                ? { operation: "rename", path: kind.move_path, oldPath: path }
+                : { operation: kind.type, path }),
+              ...(perFile && diff ? { diff } : {}),
+              ...(perFile && item.status === "completed" ? counts[index] : {}),
+            }));
+            const lineCounts =
+              item.status === "completed" && counts.every((count) => count !== undefined)
+                ? counts.reduce(
+                    (total, count) => ({
+                      additions: total.additions + count.additions,
+                      deletions: total.deletions + count.deletions,
+                    }),
+                    { additions: 0, deletions: 0 },
+                  )
+                : {};
+
             const updatedAt = yield* DateTime.now;
             const status = codexItemStatus(item.status);
             const completedAt = status.completed ? updatedAt : null;
@@ -3635,6 +3657,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               type: "file_change",
               fileName: firstChange.path,
               diffStr: firstChange.diff,
+              changes,
+              ...lineCounts,
             };
             return { node, turnItem };
           },

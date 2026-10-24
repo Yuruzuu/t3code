@@ -11,6 +11,8 @@ import {
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command-output";
+import { ThreadFileChangePreview } from "./ThreadFileChangePreview";
+import { resolveThreadActivityFileParams } from "./threadActivityFileNavigation";
 import {
   getQuestionAnswerPreview,
   hasQuestionAnswer,
@@ -53,8 +55,15 @@ import {
   type ToolActivityIcon,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  workEntryFileAction,
+  workEntryFileActionLabel,
+} from "@t3tools/client-runtime/work-log/file-action";
+import { workEntryDiffStats } from "@t3tools/client-runtime/work-log/file-change-stats";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
+import { useProject, useQuietThreadShell } from "../../state/entities";
+import { basename } from "../files/filePath";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
@@ -484,6 +493,7 @@ interface ThreadWorkLogProps {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly anchorKey: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly workspaceRoot?: string | null | undefined;
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
@@ -509,6 +519,8 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       copied={props.copiedRowId === row.id}
       expanded={props.expandedRows[row.id] ?? false}
       environmentId={props.environmentId}
+      threadId={props.threadId}
+      workspaceRoot={props.workspaceRoot}
       iconSubtleColor={props.iconSubtleColor}
       onCopyRow={props.onCopyRow}
       onToggleRow={props.onToggleRow}
@@ -544,7 +556,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     props.activities.every((row) => row.projectedItem.item.type === "reasoning")
   ) {
     return (
-      <ScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
+      <ScrollView nestedScrollEnabled className="ml-7 max-h-96 rounded-lg bg-subtle px-3 py-2">
         {props.activities.map((row) => (
           <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
         ))}
@@ -870,6 +882,89 @@ function ReplCodeText({
   );
 }
 
+function WorkLogFileLabel(props: {
+  readonly action: NonNullable<ReturnType<typeof workEntryFileAction>>;
+  readonly row: ThreadFeedActivity;
+  readonly environmentId: EnvironmentId;
+  readonly currentThreadId: ThreadId;
+  readonly workspaceRoot: string | null | undefined;
+  readonly expanded?: boolean;
+}) {
+  const navigation = useNavigation();
+  const sourceThreadId = props.row.projectedItem.sourceThreadId;
+  const thread = useQuietThreadShell(scopeThreadRef(props.environmentId, sourceThreadId));
+  const project = useProject(
+    thread ? scopeProjectRef(props.environmentId, thread.projectId) : null,
+  );
+  const workspaceRoot =
+    (props.row.projectedItem.visibility === "local" ? props.workspaceRoot : null) ??
+    thread?.worktreePath ??
+    project?.workspaceRoot;
+  const label = workEntryFileActionLabel(props.row.workEntry);
+  const suffix = label?.slice(props.action.action.length + props.action.fileName.length + 1);
+  const renderFileLink = (filePath: string, fileName: string) => {
+    const params = resolveThreadActivityFileParams({
+      environmentId: props.environmentId,
+      currentThreadId: props.currentThreadId,
+      activitySourceThreadId: sourceThreadId,
+      filePath,
+      sourceWorkspaceRoot: workspaceRoot,
+    });
+
+    return (
+      <Text
+        accessibilityRole={params ? "link" : undefined}
+        accessibilityLabel={`Open ${filePath}`}
+        className="font-t3-medium text-primary-text"
+        onPress={
+          params
+            ? (event) => {
+                event.stopPropagation();
+                void Haptics.selectionAsync();
+                navigation.navigate("ThreadFile", params);
+              }
+            : undefined
+        }
+      >
+        {fileName.length > 160 ? `${fileName.slice(0, 159)}…` : fileName}
+      </Text>
+    );
+  };
+
+  if (props.expanded) {
+    return (
+      <View className="gap-2">
+        {props.action.paths.map((path) => (
+          <View key={path} className="gap-0.5">
+            {renderFileLink(path, basename(path))}
+            <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+              {path}
+            </Text>
+          </View>
+        ))}
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {props.action.action} {renderFileLink(props.action.path, props.action.fileName)}
+      {suffix}
+    </>
+  );
+}
+
+function WorkLogTextBlock(props: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <View className="overflow-hidden rounded-lg bg-subtle px-2.5 py-2">
+      <Text className="pb-1 text-3xs text-foreground-subtle">{props.label}</Text>
+      <ScrollView nestedScrollEnabled directionalLockEnabled className="max-h-60">
+        {props.children}
+      </ScrollView>
+    </View>
+  );
+}
+
 const ThreadWorkLogRow = function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
@@ -978,6 +1073,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fetchedItem = fetchedDetail.data?.item ?? null;
+  const fileAction = workEntryFileAction(row.workEntry);
+  const diffStats = workEntryDiffStats(row.workEntry);
   const isRead = toolGroupAction(row.workEntry) === "read";
   const shownItem = fetchedItem ?? row.projectedItem.item;
   const call =
@@ -995,7 +1092,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       ? shownItem.exitCode
       : null;
   const fullDetail =
-    expanded && !reasoning && !call
+    expanded && !reasoning && !call && !fileAction
       ? fetchedItem && !isRead
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
@@ -1028,7 +1125,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
-  const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
+  const accessiblePreview = [
+    previewText,
+    fileAction?.paths.join(", "),
+    diffStats ? `${diffStats.additions} additions, ${diffStats.deletions} deletions` : null,
+    answerPreview,
+  ]
+    .filter(Boolean)
+    .join(": ");
   const displayText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
@@ -1079,7 +1183,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         }}
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
       >
-        {row.live && !expanded ? (
+        {row.live && !expanded && !fileAction ? (
           <ShimmeringWorkContent
             environmentId={props.environmentId}
             icon={icon}
@@ -1119,7 +1223,17 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             <WorkLogLabel
               tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
             >
-              {displayText}
+              {fileAction ? (
+                <WorkLogFileLabel
+                  action={fileAction}
+                  row={row}
+                  environmentId={props.environmentId}
+                  currentThreadId={props.threadId}
+                  workspaceRoot={props.workspaceRoot}
+                />
+              ) : (
+                displayText
+              )}
               {answerPreview ? (
                 <Text
                   className={
@@ -1136,6 +1250,16 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         )}
 
         <View className="shrink-0 flex-row items-center gap-px">
+          {diffStats ? (
+            <View className="mr-1 flex-row gap-1">
+              <Text className="font-mono text-2xs text-adaptive-emerald-600-400">
+                +{diffStats.additions}
+              </Text>
+              <Text className="font-mono text-2xs text-adaptive-rose-600-400">
+                −{diffStats.deletions}
+              </Text>
+            </View>
+          ) : null}
           {props.copied ? (
             <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
               Copied
@@ -1170,6 +1294,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 
       {expanded &&
       (reasoning ||
+        fileAction ||
+        shownItem.type === "file_change" ||
         fullDetail ||
         call ||
         fetchedOutput ||
@@ -1180,7 +1306,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
+          className={reasoning ? "ml-7 rounded-lg bg-subtle px-3 py-2" : "gap-2 pb-1 pt-0.5"}
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
@@ -1211,74 +1337,111 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               </View>
             ))}
           </FilePreviewGallery>
-          <ScrollView
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsVerticalScrollIndicator
-            className="max-h-60"
-            contentContainerStyle={{ paddingRight: 8 }}
-          >
-            {reasoning ? (
-              props.renderReasoning(reasoning.text)
-            ) : call ? (
-              [
-                call.command,
-                ...(call.args ?? []).map(([key, value]) =>
-                  key === "code" &&
-                  shownItem.type === "dynamic_tool" &&
-                  isJavaScriptReplTool(shownItem.toolName) ? (
-                    <View key={key}>
-                      <Text className="font-mono text-2xs leading-normal text-foreground-muted">
-                        {key}
-                      </Text>
-                      <ReplCodeText code={value} theme={props.themeAppearance} />
-                    </View>
-                  ) : (
-                    `${key} ${value}`
-                  ),
-                ),
-                call.argsText,
-              ]
-                .filter((line) => Boolean(line))
-                .map((line, index) =>
-                  typeof line === "string" ? (
-                    <Text
-                      key={`${index}:${line}`}
-                      selectable
-                      className="font-mono text-2xs leading-normal text-foreground"
-                    >
-                      {line}
+          {reasoning ? (
+            <ScrollView nestedScrollEnabled directionalLockEnabled className="max-h-60">
+              {props.renderReasoning(reasoning.text)}
+            </ScrollView>
+          ) : null}
+          {fileAction ? (
+            <WorkLogTextBlock label="Files">
+              <WorkLogFileLabel
+                action={fileAction}
+                row={row}
+                environmentId={props.environmentId}
+                currentThreadId={props.threadId}
+                workspaceRoot={props.workspaceRoot}
+                expanded
+              />
+            </WorkLogTextBlock>
+          ) : null}
+          {shownItem.type === "file_change" ? (
+            <>
+              <ThreadFileChangePreview item={shownItem} />
+              {shownItem.status === "failed" && shownItem.diffStr?.trim() ? (
+                <WorkLogTextBlock label="Error">
+                  <Text
+                    selectable
+                    className="font-mono text-2xs leading-normal text-danger-foreground"
+                  >
+                    {shownItem.diffStr}
+                  </Text>
+                </WorkLogTextBlock>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open diff"
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  navigation.navigate("ThreadReview", {
+                    environmentId: props.environmentId,
+                    threadId: row.projectedItem.sourceThreadId,
+                  });
+                }}
+                className="self-start rounded-md px-2.5 py-2 active:bg-subtle"
+              >
+                <Text className="text-xs text-primary-text">Open diff</Text>
+              </Pressable>
+            </>
+          ) : null}
+          {call ? (
+            <WorkLogTextBlock label={call.command ? "Command" : "Input"}>
+              {call.command ? (
+                <Text selectable className="font-mono text-2xs leading-normal text-foreground">
+                  {call.command}
+                </Text>
+              ) : null}
+              {call.args?.map(([key, value]) =>
+                key === "code" &&
+                shownItem.type === "dynamic_tool" &&
+                isJavaScriptReplTool(shownItem.toolName) ? (
+                  <View key={key}>
+                    <Text className="font-mono text-2xs leading-normal text-foreground-muted">
+                      {key}
                     </Text>
-                  ) : (
-                    line
-                  ),
-                )
-            ) : fullDetail ? (
+                    <ReplCodeText code={value} theme={props.themeAppearance} />
+                  </View>
+                ) : (
+                  <Text
+                    key={key}
+                    selectable
+                    className="font-mono text-2xs leading-normal text-foreground"
+                  >
+                    {`${key} ${value}`}
+                  </Text>
+                ),
+              )}
+              {call.argsText ? (
+                <Text selectable className="font-mono text-2xs leading-normal text-foreground">
+                  {call.argsText}
+                </Text>
+              ) : null}
+            </WorkLogTextBlock>
+          ) : fullDetail && !fileAction ? (
+            <WorkLogTextBlock label="Details">
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
                 {fullDetail}
               </Text>
-            ) : null}
-            {fetchedOutput ? (
-              <Text
-                selectable
-                className={cn(
-                  "font-mono text-2xs leading-normal text-foreground-muted",
-                  (!call || call.command || call.args || call.argsText) && "mt-1.5",
-                )}
-              >
+            </WorkLogTextBlock>
+          ) : null}
+          {fetchedOutput ? (
+            <WorkLogTextBlock label="Output">
+              <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
                 {fetchedOutput}
               </Text>
-            ) : null}
-            {streamsOutput ? null : exitLine}
-          </ScrollView>
+            </WorkLogTextBlock>
+          ) : null}
+          {streamsOutput ? null : exitLine}
           {streamsOutput ? (
             <>
-              <ThreadCommandOutput
-                environmentId={props.environmentId}
-                threadId={row.projectedItem.sourceThreadId}
-                itemId={row.projectedItem.sourceItemId}
-                themeAppearance={props.themeAppearance}
-              />
+              <View className="overflow-hidden rounded-lg bg-subtle px-2.5 py-2">
+                <Text className="text-3xs text-foreground-subtle">Output</Text>
+                <ThreadCommandOutput
+                  environmentId={props.environmentId}
+                  threadId={row.projectedItem.sourceThreadId}
+                  itemId={row.projectedItem.sourceItemId}
+                  themeAppearance={props.themeAppearance}
+                />
+              </View>
               {exitLine}
             </>
           ) : null}

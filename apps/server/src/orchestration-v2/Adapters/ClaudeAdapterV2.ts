@@ -1,4 +1,5 @@
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { fileContentLineCounts, structuredPatchMetadata } from "./fileChangeMetadata.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
@@ -2478,6 +2479,65 @@ function claudeNativeToolOutputText(output: ClaudeNativeToolOutput): string {
   return typeof value === "string" ? value : value === undefined ? "" : jsonStringifyForTool(value);
 }
 
+function claudeFileChangeMetadata(
+  input: {
+    readonly toolName: string;
+    readonly toolInput: ClaudeNativeToolInput;
+    readonly output: ClaudeNativeToolOutput;
+    readonly status: OrchestrationV2TurnItem["status"];
+  },
+  outputText: string,
+) {
+  const fileName = fileNameFromClaudeTool(input.toolName, input.toolInput);
+  const fallback = { fileName, ...(outputText.length === 0 ? {} : { diffStr: outputText }) };
+  if (input.status !== "completed") return fallback;
+
+  const output = claudeNativeToolOutputValue(input.output);
+  const toolInput = claudeNativeToolInputValue(input.toolInput);
+  const isWrite = normalizedClaudeToolName(input.toolName) === "write";
+  const operation = isWrite
+    ? field(output, "type") === "create"
+      ? "create"
+      : field(output, "type") === "update"
+        ? "update"
+        : "write"
+    : "edit";
+  const changes = [{ operation, path: fileName }];
+  if (field(output, "staged") === true) return { ...fallback, changes };
+
+  const nativeOld = field(output, "oldString");
+  const nativeNew = field(output, "newString");
+  const inputOld = field(toolInput, "old_string");
+  const inputNew = field(toolInput, "new_string");
+  const oldStr = isWrite
+    ? operation === "create"
+      ? ""
+      : field(output, "originalFile")
+    : typeof nativeOld === "string"
+      ? nativeOld
+      : inputOld;
+  const newStr = isWrite
+    ? field(output, "content")
+    : typeof nativeNew === "string"
+      ? nativeNew
+      : inputNew;
+  const replacement =
+    typeof oldStr === "string" && typeof newStr === "string" ? { oldStr, newStr } : undefined;
+  const patch = structuredPatchMetadata(field(output, "structuredPatch"));
+  const counts =
+    patch ??
+    (isWrite && replacement !== undefined
+      ? fileContentLineCounts(replacement.oldStr, replacement.newStr)
+      : undefined);
+  return {
+    ...fallback,
+    changes,
+    ...replacement,
+    ...(counts === undefined ? {} : { additions: counts.additions, deletions: counts.deletions }),
+    ...(patch === undefined ? {} : { diffStr: patch.diffStr }),
+  };
+}
+
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   if (typeof value === "object" && value !== null) {
@@ -4852,8 +4912,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? {
                     ...itemBase,
                     type: "file_change",
-                    fileName: fileNameFromClaudeTool(input.toolName, input.toolInput),
-                    ...(outputText.length === 0 ? {} : { diffStr: outputText }),
+                    ...claudeFileChangeMetadata(input, outputText),
                   }
                 : itemType === "web_search"
                   ? {

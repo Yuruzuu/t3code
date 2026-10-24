@@ -347,6 +347,22 @@
       "types": "./src/work-log/itemDetail.ts",
       "default": "./src/work-log/itemDetail.ts"
     },
+    "./work-log/file-action": {
+      "types": "./src/work-log/fileAction.ts",
+      "default": "./src/work-log/fileAction.ts"
+    },
+    "./work-log/file-change-preview": {
+      "types": "./src/work-log/fileChangePreview.ts",
+      "default": "./src/work-log/fileChangePreview.ts"
+    },
+    "./work-log/file-change-stats": {
+      "types": "./src/work-log/fileChangeStats.ts",
+      "default": "./src/work-log/fileChangeStats.ts"
+    },
+    "./work-log/read-tool-output": {
+      "types": "./src/work-log/readToolOutput.ts",
+      "default": "./src/work-log/readToolOutput.ts"
+    },
     "./work-log/presentation": {
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"

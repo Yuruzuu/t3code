@@ -280,6 +280,44 @@ describe("orchestration V2 wire projection", () => {
     expect(failed).not.toHaveProperty("newStr");
   });
 
+  it("returns file bodies when an expanded row fetches the item", () => {
+    const item = {
+      ...base,
+      type: "file_change" as const,
+      fileName: "src/main.ts",
+      diffStr: "@@ -1 +1 @@\n-old\n+new\n",
+      oldStr: "old",
+      newStr: "new",
+    };
+    expect(projectTurnItemForDetail(item)).toMatchObject({
+      diffStr: item.diffStr,
+      oldStr: "old",
+      newStr: "new",
+    });
+  });
+
+  it("sends each file's diff of a multi-file patch only to an expanded row", () => {
+    const item = {
+      ...base,
+      type: "file_change" as const,
+      fileName: "src/a.ts",
+      changes: [
+        { operation: "update", path: "src/a.ts", diff: "@@ -1 +1 @@\n-a\n+b\n", additions: 1 },
+        { operation: "add", path: "src/b.ts", diff: "new file\n" },
+      ],
+    };
+    expect(projectTurnItemForWire(item)).toMatchObject({
+      changes: [
+        { operation: "update", path: "src/a.ts", additions: 1 },
+        { operation: "add", path: "src/b.ts" },
+      ],
+    });
+    expect(
+      (projectTurnItemForWire(item) as typeof item).changes.some((change) => "diff" in change),
+    ).toBe(false);
+    expect(projectTurnItemForDetail(item)).toMatchObject({ changes: item.changes });
+  });
+
   it("retains only result identities and failure metadata in live tool events", () => {
     const output = {
       isError: true,

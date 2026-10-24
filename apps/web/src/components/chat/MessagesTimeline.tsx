@@ -6,6 +6,9 @@ import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipel
 import { MarkdownFindContext, findRevealRef } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
+import { WorkLogDiffStats } from "./WorkLogDiffStats";
+import { WorkLogFileLinks, WorkLogFileName, WorkLogFilePathHeader } from "./WorkLogFileLinks";
+import { workEntryFileAction } from "@t3tools/client-runtime/work-log/file-action";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
@@ -225,6 +228,7 @@ import {
   threadReadTargetTitle,
   toolGroupAction,
   workEntryDisplayLabel,
+  workEntrySummaryLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
@@ -285,7 +289,7 @@ import {
   formatDayAwareTimestamp,
   formatUpcomingTimestamp,
 } from "../../timestampFormat";
-import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
+import { FetchedReadOutput, FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import {
@@ -427,6 +431,12 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
+/** After a disclosure toggle only new content follows the end, not rows resizing in place. */
+const TIMELINE_MAINTAIN_SCROLL_AT_END_FOR_NEW_CONTENT = {
+  ...TIMELINE_MAINTAIN_SCROLL_AT_END,
+  on: { ...TIMELINE_MAINTAIN_SCROLL_AT_END.on, itemLayout: false },
+} as const satisfies MaintainScrollAtEndOptions;
+
 const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
   ...TIMELINE_MAINTAIN_SCROLL_AT_END,
   animated: true,
@@ -694,13 +704,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, [settlingListIdentity]);
 
-  const disclosurePinsEndRef = useRef(false);
   const disclosureCollapsedRef = useRef(false);
-  const pinDisclosureToEnd = () => {
-    if (!disclosurePinsEndRef.current) return;
-    const element = listRef.current?.getScrollableNode();
-    if (element) element.scrollTop = element.scrollHeight;
-  };
 
   const scheduleDisclosureSettle = () => {
     if (disclosureSettleFrameRef.current !== null) {
@@ -710,10 +714,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
     }
     disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      pinDisclosureToEnd();
       disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        pinDisclosureToEnd();
-        disclosurePinsEndRef.current = false;
         disclosureAnchorKeyRef.current = null;
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
@@ -728,16 +729,21 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
+  // A toggle keeps the clicked row where it is, so row resizes stop following the end until
+  // new content arrives; an opened row's output can load after the disclosure settles.
+  const [expansionHoldEntries, setExpansionHoldEntries] = useState<typeof timelineEntries | null>(
+    null,
+  );
+  const expansionHoldsPosition = expansionHoldEntries === timelineEntries;
   const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string, collapsed = false) => {
+    setExpansionHoldEntries(timelineEntries);
     disclosureAnchorKeyRef.current = anchorKey;
     disclosureCollapsedRef.current = collapsed;
-    disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
   };
 
   const shouldRestoreVisibleContentPosition = (row: MessagesTimelineRow) => {
-    if (disclosurePinsEndRef.current) return false;
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
@@ -1218,10 +1224,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const handleItemSizeChanged = () => {
-    if (disclosurePinsEndRef.current) {
-      queueMicrotask(pinDisclosureToEnd);
-      scheduleDisclosureSettle();
-    }
     reportContentOverflow();
     scheduleMinimapRefresh();
   };
@@ -1538,9 +1540,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
               fullscreenAppRowId !== null ||
               disclosureToggleSettling
                 ? false
-                : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                  ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                  : TIMELINE_MAINTAIN_SCROLL_AT_END
+                : expansionHoldsPosition
+                  ? TIMELINE_MAINTAIN_SCROLL_AT_END_FOR_NEW_CONTENT
+                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
+                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+                    : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
             maintainVisibleContentPosition={
               findActive ||
@@ -3094,8 +3098,9 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             <V2ItemInspector
               projectedItem={row.projectedItem}
               environmentId={ctx.activeThreadEnvironmentId}
+              panelThreadId={ctx.threadRef?.threadId}
               cwd={ctx.markdownCwd}
-              workspaceRoot={ctx.workspaceRoot}
+              workspaceRoot={visibility === "local" ? ctx.workspaceRoot : undefined}
               onOpenThread={ctx.onOpenThread}
               onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
@@ -3169,8 +3174,9 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             <V2ItemInspector
               projectedItem={row.projectedItem}
               environmentId={ctx.activeThreadEnvironmentId}
+              panelThreadId={ctx.threadRef?.threadId}
               cwd={ctx.markdownCwd}
-              workspaceRoot={ctx.workspaceRoot}
+              workspaceRoot={visibility === "local" ? ctx.workspaceRoot : undefined}
               onOpenThread={ctx.onOpenThread}
               onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
@@ -3364,12 +3370,13 @@ const WorkGroupSection = memo(function WorkGroupSection({
 
   return (
     <section aria-label="Activity">
-      {nonEmptyEntries.map((workEntry) => (
+      {nonEmptyEntries.map((workEntry, index) => (
         <SimpleWorkEntryRow
           key={workEntry.id}
           workEntry={workEntry}
           workspaceRoot={workspaceRoot}
           displayLabel={displayLabel}
+          endedAt={nonEmptyEntries[index + 1]?.createdAt}
           onToggleEntry={onToggleStandaloneEntry}
         />
       ))}
@@ -3508,8 +3515,13 @@ function ExpandedWorkGroupEntries({
     return observeResize(content ? [element, content] : element, updateScrollFades);
   }, [updateScrollFades]);
 
-  const renderEntry = ({ item }: { item: TimelineWorkEntry }) => (
-    <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
+  const renderEntry = ({ item, index }: { item: TimelineWorkEntry; index: number }) => (
+    <SimpleWorkEntryRow
+      key={item.id}
+      workEntry={item}
+      workspaceRoot={workspaceRoot}
+      endedAt={entries[index + 1]?.createdAt}
+    />
   );
 
   const updateExpandedContentHeight = () => {
@@ -3560,7 +3572,7 @@ function ExpandedWorkGroupEntries({
           data-tool-group-scroll
           style={{ maxHeight: `calc(min(18rem, 50dvh) + ${expandedContentHeight}px)` }}
           className={cn(
-            "scrollbar-gutter-stable scroll-py-6 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            "scrollbar-gutter-stable scroll-py-6 overflow-x-hidden rounded-md pe-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
             getVirtualizedScrollFadeClassName(fades),
           )}
         />
@@ -4012,13 +4024,24 @@ function WorkGroupHeader(props: {
         <ToolActivityIconView
           icon={props.toolIcon}
           fallbackName={props.iconName}
-          className="size-4 shrink-0 stroke-2 text-icon-muted"
+          className="size-4 shrink-0 stroke-2 text-icon-muted group-hover/timeline-row:text-foreground"
           muted
         />
       }
       label={
-        <span className={cn("block truncate", props.active && !props.failed && "live-tool-shine")}>
-          {props.label}
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span
+            className={cn("min-w-0 truncate", props.active && !props.failed && "live-tool-shine")}
+          >
+            {props.label}
+          </span>
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "ms-0.5 size-3 shrink-0 text-icon-muted opacity-0 transition-[opacity,transform] group-hover/timeline-row:opacity-70 group-focus-visible/timeline-row:opacity-70 duration-200",
+              props.expanded && "rotate-90 opacity-70",
+            )}
+          />
         </span>
       }
       trailing={
@@ -4887,7 +4910,11 @@ function ToolActivityIconView(props: {
   muted: boolean;
 }) {
   const { resolvedTheme } = use(TimelineRowCtx);
-  const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-60");
+  const fallbackClassName = cn(
+    props.className,
+    props.muted &&
+      "opacity-70 transition-[color,opacity,filter] light:brightness-60 group-hover/timeline-row:opacity-100 light:group-hover/timeline-row:brightness-100",
+  );
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
@@ -5298,6 +5325,8 @@ type WorkEntryRowProps = {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
   displayLabel?: string | undefined;
+  /** Start of the following entry, which bounds a reasoning item's duration. */
+  endedAt?: string | undefined;
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 };
 
@@ -5323,7 +5352,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
 });
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
-  const { workEntry, workspaceRoot, displayLabel } = props;
+  const { workEntry, workspaceRoot, displayLabel, endedAt } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
@@ -5426,15 +5455,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
   const isReasoning = workEntry.itemType === "reasoning";
+  // Provider errors and retries carry one message; it reads best as prose, like a thought.
+  const expandsAsProse = isReasoning || workEntry.itemType === "error";
+  const fileAction = workEntryFileAction(workEntry);
   const questionHeading = workEntry.questionAnswer
     ? getQuestionTextPreview(workEntry.questionAnswer)
     : "";
+  const summaryLabel = workEntrySummaryLabel(workEntry, endedAt);
   const previewText =
-    isReasoning && expanded
-      ? workEntry.toolLifecycleStatus === "inProgress"
-        ? "Thinking"
-        : "Thought"
-      : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+    summaryLabel ??
+    (questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot)));
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
@@ -5469,7 +5499,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       viewedImage,
     );
   const expandedBody =
-    expanded && !isReasoning
+    expanded && !expandsAsProse
       ? plainOutput !== undefined
         ? plainOutput
         : buildToolCallExpandedBody(
@@ -5483,12 +5513,17 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     plainOutput !== undefined &&
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
+  // A single-file read renders as the file itself rather than its path and raw tool output.
+  const readFileCard =
+    plainOutputFetches && toolGroupAction(workEntry) === "read" && fileAction?.paths.length === 1
+      ? fileAction
+      : null;
   const canExpandProjectedItem =
     plainOutput !== undefined
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
       : workEntry.projectedItem === undefined
         ? canExpand
-        : isReasoning
+        : expandsAsProse
           ? Boolean(workEntry.detail?.trim())
           : Boolean(
               viewedImage ||
@@ -5504,7 +5539,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         : showFailedIndicator
           ? failedToolIconClassName
           : workEntry.tone === "tool"
-            ? "text-icon-muted"
+            ? "text-icon-muted group-hover/timeline-row:text-foreground"
             : iconConfig.className,
   );
   const headingClass = showWarningIndicator
@@ -5512,8 +5547,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
       : workLogEntryIsToolLike(workEntry)
-        ? "text-secondary-label"
-        : "text-foreground/80";
+        ? "text-secondary-label group-hover/timeline-row:text-foreground"
+        : "text-foreground/80 group-hover/timeline-row:text-foreground";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
   const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
     .filter(Boolean)
@@ -5559,32 +5594,35 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       label={
         <div className="min-w-0 flex-1 overflow-hidden">
           <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
-            <span
-              className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}
-            >
-              {isReasoning && !expanded ? (
-                <ChatMarkdown
-                  inline
-                  text={workEntry.detail ?? previewText}
-                  cwd={ctx.markdownCwd}
-                  parseRawHtml={false}
-                  extraRemarkPlugins={[
-                    [
-                      remarkThoughtPreview,
-                      workEntry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought",
-                    ],
-                  ]}
-                />
-              ) : threadLabel ? (
+            <span className={cn("min-w-0 truncate", headingClass)}>
+              {threadLabel ? (
                 <ThreadReadLabel
                   label={threadLabel}
                   environmentId={ctx.activeThreadEnvironmentId}
                   linked
                 />
+              ) : fileAction && threadRef && previewText.startsWith(`${fileAction.action} `) ? (
+                <>
+                  {fileAction.action}{" "}
+                  <WorkLogFileName
+                    path={fileAction.path}
+                    label={fileAction.fileName}
+                    environmentId={threadRef.environmentId}
+                    threadId={threadRef.threadId}
+                    sourceThreadId={workEntry.projectedItem?.sourceThreadId ?? threadRef.threadId}
+                    workspaceRoot={
+                      !workEntry.projectedItem || workEntry.projectedItem.visibility === "local"
+                        ? workspaceRoot
+                        : undefined
+                    }
+                  />
+                  {previewText.slice(`${fileAction.action} ${fileAction.fileName}`.length)}
+                </>
               ) : (
                 previewText
               )}
             </span>
+            <WorkLogDiffStats entry={workEntry} />
             {answerPreview ? (
               <span
                 className={cn(
@@ -5598,6 +5636,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               >
                 {answerPreview}
               </span>
+            ) : null}
+            {canExpandProjectedItem ? (
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "ms-0.5 size-3 shrink-0 self-center text-icon-muted opacity-0 transition-[opacity,transform] group-hover/timeline-row:opacity-70 group-focus-visible/timeline-row:opacity-70 duration-200",
+                  expanded && "rotate-90 opacity-70",
+                )}
+              />
             ) : null}
           </p>
         </div>
@@ -5636,20 +5683,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
-          <span
-            className={cn(
-              "flex size-4 shrink-0 items-center justify-center",
-              !canExpandProjectedItem && "invisible",
-            )}
-            aria-hidden
-          >
-            <ChevronRightIcon
-              className={cn(
-                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
-                expanded && "rotate-90",
-              )}
-            />
-          </span>
         </>
       }
     >
@@ -5669,28 +5702,71 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       {expanded && workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
-      {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
+      {expanded && expandsAsProse ? <ReasoningTraceContent entries={[workEntry]} /> : null}
       {expanded &&
-      !isReasoning &&
+      !expandsAsProse &&
       !workEntry.questionAnswer &&
+      // The image is the result; its path and empty text output only repeat the row.
+      !viewedImage &&
       canExpandProjectedItem &&
       (expandedBody ||
         plainOutputFetches ||
         (workEntry.projectedItem && plainOutput === undefined)) ? (
-        <WorkLogDetails kind="panel">
+        <WorkLogDetails
+          kind={
+            (workEntry.projectedItem && plainOutput === undefined) || readFileCard
+              ? "panel-group"
+              : "panel"
+          }
+        >
           {workEntry.projectedItem && plainOutput === undefined ? (
             <V2ItemInspector
               projectedItem={workEntry.projectedItem}
               environmentId={ctx.activeThreadEnvironmentId}
+              panelThreadId={threadRef?.threadId}
               cwd={ctx.markdownCwd}
-              workspaceRoot={workspaceRoot}
+              workspaceRoot={
+                workEntry.projectedItem.visibility === "local" ? workspaceRoot : undefined
+              }
               onOpenThread={ctx.onOpenThread}
               onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
               onImageExpand={ctx.onImageExpand}
             />
+          ) : readFileCard && workEntry.projectedItem && threadRef ? (
+            <FetchedReadOutput
+              projectedItem={workEntry.projectedItem}
+              environmentId={ctx.activeThreadEnvironmentId}
+              path={readFileCard.path}
+              onImageExpand={onImageExpand}
+              header={
+                <WorkLogFilePathHeader
+                  path={readFileCard.path}
+                  displayPath={formatWorkspaceRelativePath(readFileCard.path, workspaceRoot)}
+                  environmentId={threadRef.environmentId}
+                  threadId={threadRef.threadId}
+                  sourceThreadId={workEntry.projectedItem.sourceThreadId}
+                  workspaceRoot={
+                    workEntry.projectedItem.visibility === "local" ? workspaceRoot : undefined
+                  }
+                />
+              }
+            />
           ) : (
             <>
+              {fileAction && threadRef ? (
+                <WorkLogFileLinks
+                  paths={fileAction.paths}
+                  environmentId={threadRef.environmentId}
+                  threadId={threadRef.threadId}
+                  sourceThreadId={workEntry.projectedItem?.sourceThreadId ?? threadRef.threadId}
+                  workspaceRoot={
+                    !workEntry.projectedItem || workEntry.projectedItem.visibility === "local"
+                      ? workspaceRoot
+                      : undefined
+                  }
+                />
+              ) : null}
               {expandedBody ? (
                 <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
               ) : null}

@@ -28,6 +28,7 @@ import {
   setPendingUserInputCustomAnswer,
   isPendingUserInputOptionSelected,
   buildPendingUserInputAnswers,
+  workEntryRowLabel,
 } from "./threadActivity";
 
 const threadId = ThreadId.make("thread-1");
@@ -136,6 +137,123 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
     streaming: false,
   };
 }
+
+describe("mobile file activity labels", () => {
+  it.each([
+    {
+      toolName: "Read",
+      input: { file_path: "/repo/src/main.ts" },
+      path: "/repo/src/main.ts",
+      label: "Read main.ts",
+    },
+    {
+      toolName: "Edit",
+      input: { file_path: "C:\\repo\\src\\main.ts", old_string: "a", new_string: "b" },
+      path: "C:\\repo\\src\\main.ts",
+      label: "Edited main.ts",
+    },
+    {
+      toolName: "create_file",
+      input: { path: "src/new.ts" },
+      path: "src/new.ts",
+      label: "Created new.ts",
+    },
+  ])(
+    "shows the action and basename for $toolName without losing full input",
+    ({ toolName, input, path, label }) => {
+      const item: OrchestrationV2TurnItem = {
+        ...base("file-tool", "2026-06-20T00:00:02.000Z", 1),
+        type: "dynamic_tool",
+        toolName,
+        input,
+      };
+      const feed = buildThreadFeed([projected(item, 0)]);
+      const activity = feed.flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      )[0]!;
+
+      expect(workEntryRowLabel(activity.workEntry)).toBe(label);
+      expect(workEntryRowLabel(activity.workEntry, true)).toBe(label);
+      expect(activity.workEntry.structuredPayload).toBe(item);
+      expect(activity.getFullDetail()).toContain(
+        toolName === "Read" ? path : JSON.stringify(path).slice(1, -1),
+      );
+
+      const presented = deriveThreadFeedPresentation(feed, null, new Set([runId]));
+      const loneCall = presented.flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      )[0];
+      expect(loneCall?.groupStandIn?.label).toBe(label);
+    },
+  );
+
+  it("retains every changed path and source identity while shortening a multi-file edit label", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...base("files", "2026-06-20T00:00:02.000Z", 1),
+      type: "file_change",
+      fileName: "src/first.ts",
+      changes: [
+        { operation: "edit", path: "src/first.ts" },
+        { operation: "edit", path: "src/second.ts" },
+      ],
+      additions: 5,
+      deletions: 2,
+    };
+    const activity = buildThreadFeed([projected(item, 0, "inherited")]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0]!;
+
+    expect(workEntryRowLabel(activity.workEntry)).toBe("Edited first.ts and 1 file");
+    expect(activity.workEntry.changedFiles).toEqual(["src/first.ts", "src/second.ts"]);
+    expect(activity.getFullDetail()).toContain("src/second.ts");
+    expect(activity.projectedItem.sourceThreadId).toBe(sourceThreadId);
+    expect(activity.workEntry.structuredPayload).toMatchObject({ additions: 5, deletions: 2 });
+  });
+
+  it("keeps edit failure detail and labels failures without implying a successful edit", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...base("failed-edit", "2026-06-20T00:00:02.000Z", 1),
+      type: "file_change",
+      status: "failed",
+      fileName: "src/main.ts",
+      changes: [{ operation: "edit", path: "src/main.ts" }],
+      diffStr: "The original text was not found.",
+    };
+    const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0]!;
+
+    expect(workEntryRowLabel(activity.workEntry)).toBe("Failed to edit main.ts");
+    expect(activity.getFullDetail()).toContain(item.diffStr);
+    expect(activity.status).toBe("failure");
+    expect(activity.canExpand).toBe(true);
+  });
+
+  it("keeps an in-progress file edit live with an action-first label", () => {
+    const startedAt = "2026-06-20T00:00:01.000Z";
+    const item: OrchestrationV2TurnItem = {
+      ...base("streaming-edit", "2026-06-20T00:00:02.000Z", 1),
+      type: "file_change",
+      status: "running",
+      completedAt: null,
+      fileName: "src/main.ts",
+      changes: [{ operation: "edit", path: "src/main.ts" }],
+    };
+    const feed = buildThreadFeed([projected(userMessage(), 0), projected(item, 1)]);
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      { runId, status: "running", startedAt, completedAt: null },
+      new Set(),
+      new Set(),
+      startedAt,
+      true,
+    );
+
+    expect(presented.find((entry) => entry.type === "activity-group")).toMatchObject({
+      activities: [{ live: true, groupStandIn: { label: "Editing main.ts" } }],
+    });
+  });
+});
 
 describe("buildThreadFeed", () => {
   it("keeps async answers in question history instead of user bubbles", () => {

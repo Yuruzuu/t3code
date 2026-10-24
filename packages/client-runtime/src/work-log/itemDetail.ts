@@ -131,6 +131,14 @@ export function turnItemNeedsDetailFetch(item: OrchestrationV2TurnItem): boolean
       return item.outputOmitted === true;
     case "dynamic_tool":
       return item.outputOmitted === true || isSummarizedValue(item.input);
+    case "file_change":
+      // Wire summaries omit diffs; fetch them only after the row is expanded.
+      return (
+        item.status !== "failed" &&
+        item.diffStr === undefined &&
+        item.oldStr === undefined &&
+        item.newStr === undefined
+      );
     default:
       return false;
   }

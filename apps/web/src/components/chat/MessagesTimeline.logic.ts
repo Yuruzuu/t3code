@@ -13,6 +13,7 @@ import {
   commandDisplayText,
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
+import { workEntryFileActionLabel } from "@t3tools/client-runtime/work-log/file-action";
 import {
   liveActivityToolStatus,
   normalizeCompactToolLabel,
@@ -90,6 +91,8 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
 
 function singleToolCallLabel(entry: WorkLogEntry): string {
   if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
+  const fileActionLabel = workEntryFileActionLabel(entry);
+  if (fileActionLabel) return fileActionLabel;
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
   const item = entry.structuredPayload;
@@ -125,12 +128,40 @@ function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefin
   );
 }
 
+/**
+ * Row heading for reasoning and shell commands; their content moves into the expanded panel.
+ * Reasoning items carry no end time, so the next entry's start bounds the thought.
+ */
+export function workEntrySummaryLabel(
+  entry: WorkLogEntry,
+  endedAt: string | undefined,
+): string | null {
+  const inProgress = entry.toolLifecycleStatus === "inProgress";
+  if (entry.itemType === "reasoning") {
+    if (inProgress) return "Thinking";
+    const elapsedMs = endedAt ? Date.parse(endedAt) - Date.parse(entry.createdAt) : NaN;
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "Thought";
+    const seconds = Math.max(1, Math.round(elapsedMs / 1_000));
+    return `Thought for ${seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1_000)}`;
+  }
+  if (
+    entry.command?.trim() &&
+    !workEntryFileActionLabel(entry) &&
+    !resolveWorkEntryToolPresentation(entry)
+  ) {
+    return inProgress ? "Running a command" : "Ran a command";
+  }
+  return null;
+}
+
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
   if (entry.itemType === "system_notice") return entry.label;
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
     return thought || entry.label;
   }
+  const fileActionLabel = workEntryFileActionLabel(entry);
+  if (fileActionLabel) return fileActionLabel;
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command?.trim()) return commandDisplayText(entry.command);
@@ -237,6 +268,8 @@ export function liveWorkEntryLabel(
       (status === "inProgress" ? "Thinking" : "Thought")
     );
   }
+  const fileActionLabel = workEntryFileActionLabel({ ...entry, toolLifecycleStatus: status });
+  if (fileActionLabel) return fileActionLabel;
   const toolPresentation = resolveWorkEntryToolPresentation({
     ...entry,
     toolLifecycleStatus: status,

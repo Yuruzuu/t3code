@@ -2,7 +2,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
-  htmlRenderFrameHeight,
+  htmlRenderFitHeight,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
@@ -19,6 +19,11 @@ import { observeResize } from "~/lib/observeResize";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
+// The timeline unmounts a row scrolled out of range and remounts it on the way
+// back. Starting from the live height keeps the row from resizing under the
+// reader, and the page from scrolling inside a short frame, before it reports.
+const liveContentHeights = new Map<string, { readonly width: number; readonly height: number }>();
+
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
@@ -33,13 +38,23 @@ export function HtmlRenderFrame(props: {
     if (!box) return;
     setWidth(box.clientWidth);
     return observeResize(box, ([entry]) => {
-      if (entry) setWidth(entry.contentRect.width);
+      if (entry) setWidth(Math.round(entry.contentRect.width));
     });
   }, []);
   // Client fonts can wrap a page taller than the server measured it; a frame
   // left short would scroll inside the thread and take the reader's scroll.
   const [contentHeight, setContentHeight] = useState<number>();
-  const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
+  const remembered = liveContentHeights.get(attachmentId);
+  const height = htmlRenderFitHeight(
+    props.htmlRender,
+    width,
+    contentHeight ?? (remembered?.width === width ? remembered.height : undefined),
+  );
+  useEffect(() => {
+    if (contentHeight !== undefined) {
+      liveContentHeights.set(attachmentId, { width, height: contentHeight });
+    }
+  }, [attachmentId, width, contentHeight]);
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,

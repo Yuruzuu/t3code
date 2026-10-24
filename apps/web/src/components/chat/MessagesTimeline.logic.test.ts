@@ -33,7 +33,36 @@ import {
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
+  workEntrySummaryLabel,
 } from "./MessagesTimeline.logic";
+
+describe("workEntrySummaryLabel", () => {
+  const base = {
+    id: "entry",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "",
+    tone: "tool",
+  } as const;
+
+  it("times a finished thought by the next entry", () => {
+    const thought = { ...base, tone: "thinking", itemType: "reasoning", detail: "Plan" } as const;
+    expect(workEntrySummaryLabel(thought, "2026-01-01T00:00:05.400Z")).toBe("Thought for 5s");
+    expect(workEntrySummaryLabel(thought, "2026-01-01T00:01:30.000Z")).toBe("Thought for 1m 30s");
+    expect(workEntrySummaryLabel(thought, undefined)).toBe("Thought");
+    expect(
+      workEntrySummaryLabel({ ...thought, toolLifecycleStatus: "inProgress" }, undefined),
+    ).toBe("Thinking");
+  });
+
+  it("summarizes shell commands but leaves file reads to their own label", () => {
+    const command = { ...base, itemType: "command_execution", command: "bun run build" } as const;
+    expect(workEntrySummaryLabel(command, undefined)).toBe("Ran a command");
+    expect(
+      workEntrySummaryLabel({ ...command, toolLifecycleStatus: "inProgress" }, undefined),
+    ).toBe("Running a command");
+    expect(workEntrySummaryLabel({ ...base, label: "Read file" }, undefined)).toBeNull();
+  });
+});
 
 describe("computeMessageDurationStart", () => {
   it("uses the previous completed assistant updatedAt for subsequent assistant responses", () => {

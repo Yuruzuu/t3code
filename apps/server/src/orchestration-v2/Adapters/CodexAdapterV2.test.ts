@@ -5914,6 +5914,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       turnId: string,
       itemId: string,
       changes: ReadonlyArray<FileUpdateChange>,
+      status?: "failed",
     ): CodexReplay.CodexAppServerReplayEntry => ({
       type: "emit_inbound",
       label: `${phase} ${itemId}`,
@@ -5926,7 +5927,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           item: {
             type: "fileChange",
             id: itemId,
-            status: phase === "started" ? "inProgress" : "completed",
+            status: status ?? (phase === "started" ? "inProgress" : "completed"),
             changes,
           },
         },
@@ -6022,6 +6023,165 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ? [event.turnItem]
           : [],
       )[0];
+
+    it.effect(
+      "preserves native file operations and call totals across notification revisions",
+      () =>
+        Effect.gen(function* () {
+          const changes: ReadonlyArray<FileUpdateChange> = [
+            { ...addA, diff: "@@ -0,0 +1,2 @@\n+first\n+second\n" },
+            { ...renameC, diff: "@@ -1,2 +1,2 @@\n context\n-old\n+new\n" },
+            { ...deleteE, diff: "@@ -1 +0,0 @@\n-gone\n" },
+          ];
+          const { harness } = yield* startApprovalTurn("file-change-metadata", [
+            fileChange("started", nativeTurnId, "patch-metadata", changes),
+            fileChange("completed", nativeTurnId, "patch-metadata", [changes[0]!]),
+            fileChange("completed", nativeTurnId, "patch-metadata", changes),
+            fileChange("completed", nativeTurnId, "patch-metadata", changes),
+            turnCompleted(nativeTurnId),
+          ]);
+          yield* harness.firstTerminal;
+          const items = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "file_change"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.isNotEmpty(items);
+          assert.equal(new Set(items.map((item) => item.id)).size, 1);
+          const latest = items.at(-1)!;
+          assert.equal(latest.fileName, addA.path);
+          assert.equal(latest.diffStr, changes[0]!.diff);
+          assert.deepEqual(latest.changes, [
+            {
+              operation: "add",
+              path: addA.path,
+              diff: changes[0]!.diff,
+              additions: 2,
+              deletions: 0,
+            },
+            {
+              operation: "rename",
+              path: "/w/d.ts",
+              oldPath: renameC.path,
+              diff: changes[1]!.diff,
+              additions: 1,
+              deletions: 1,
+            },
+            {
+              operation: "delete",
+              path: deleteE.path,
+              diff: changes[2]!.diff,
+              additions: 0,
+              deletions: 1,
+            },
+          ]);
+          assert.equal(latest.additions, 3);
+          assert.equal(latest.deletions, 2);
+          assert.deepEqual(
+            items.slice(-2).map(({ additions, deletions }) => ({ additions, deletions })),
+            [
+              { additions: 3, deletions: 2 },
+              { additions: 3, deletions: 2 },
+            ],
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect("omits aggregate counts when any native file diff is incomplete", () =>
+      Effect.gen(function* () {
+        const { harness } = yield* startApprovalTurn("file-change-unknown-counts", [
+          fileChange("completed", nativeTurnId, "patch-unknown", [
+            { ...addA, diff: "@@ -0,0 +1 @@\n+created\n" },
+            updateB,
+          ]),
+          turnCompleted(nativeTurnId),
+        ]);
+        yield* harness.firstTerminal;
+        const item = harness.events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "file_change"
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1)!;
+        // A file whose own diff is readable keeps its counts; only the call total is unknown.
+        assert.deepEqual(item.changes, [
+          {
+            operation: "add",
+            path: addA.path,
+            diff: "@@ -0,0 +1 @@\n+created\n",
+            additions: 1,
+            deletions: 0,
+          },
+          { operation: "update", path: updateB.path, diff: "@@" },
+        ]);
+        assert.isUndefined(item.additions);
+        assert.isUndefined(item.deletions);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("computes full native counts before file-change preview storage truncation", () =>
+      Effect.gen(function* () {
+        const diff = `@@ -0,0 +1,4000 @@\n${"+created line\n".repeat(4000)}`;
+        const { harness } = yield* startApprovalTurn("file-change-full-counts", [
+          fileChange("completed", nativeTurnId, "patch-large", [{ ...addA, diff }]),
+          turnCompleted(nativeTurnId),
+        ]);
+        yield* harness.firstTerminal;
+        const item = harness.events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "file_change"
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1)!;
+        assert.equal(item.additions, 4000);
+        assert.equal(item.deletions, 0);
+        assert.equal(item.diffStr, diff);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("keeps failed file-change previews without claiming lines were changed", () =>
+      Effect.gen(function* () {
+        const diff = "@@ -1 +1 @@\n-old\n+new\n";
+        const { harness } = yield* startApprovalTurn("file-change-failed-counts", [
+          fileChange("completed", nativeTurnId, "patch-failed", [{ ...updateB, diff }], "failed"),
+          turnCompleted(nativeTurnId),
+        ]);
+        yield* harness.firstTerminal;
+        const item = harness.events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "file_change"
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1)!;
+        assert.equal(item.status, "failed");
+        assert.equal(item.diffStr, diff);
+        assert.isUndefined(item.additions);
+        assert.isUndefined(item.deletions);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
 
     it.effect("answers without waiting for late paths or borrowing another item's paths", () =>
       Effect.gen(function* () {

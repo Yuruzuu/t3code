@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "../../lib/utils";
+import { WorkLogPanel } from "./WorkLogPanel";
 
 const GroupedRows = createContext(false);
 
@@ -22,13 +23,14 @@ export function WorkLogBlock({
 }) {
   return (
     <div
-      className={
+      className={cn(
         continues || layout === "group-header"
           ? "pb-0"
           : layout === "group-content"
             ? "pb-1"
-            : "pb-2"
-      }
+            : "pb-2",
+        layout === "group-content" && "ms-2 border-s border-border/50 ps-3",
+      )}
     >
       {children}
     </div>
@@ -68,7 +70,7 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
         ) : null}
         <div
           className={cn(
-            "min-w-0 flex-1 text-secondary-label",
+            "min-w-0 flex-1 text-secondary-label transition-colors group-hover/timeline-row:text-foreground",
             !wrapLabel && "truncate [&_*]:whitespace-nowrap",
           )}
         >
@@ -133,7 +135,7 @@ export function WorkLogDetails({
   followLive = false,
 }: {
   children: ReactNode;
-  kind?: "text" | "panel" | "media";
+  kind?: "text" | "panel" | "panel-group" | "media";
 
   followLive?: boolean;
 }) {
@@ -158,14 +160,14 @@ export function WorkLogDetails({
         "cursor-auto",
         kind === "text"
           ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
-          : kind === "panel"
+          : kind === "panel" || kind === "panel-group"
             ? "mt-0.5 mb-1.5 pb-2"
             : "mt-1",
       )}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      {children}
+      {kind === "panel" ? <WorkLogPanel>{children}</WorkLogPanel> : children}
     </div>
   );
 }

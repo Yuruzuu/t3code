@@ -1,6 +1,10 @@
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { deriveMessagesTimelineRows, liveWorkEntryLabel } from "./MessagesTimeline.logic";
+import {
+  deriveMessagesTimelineRows,
+  liveWorkEntryLabel,
+  workEntryDisplayLabel,
+} from "./MessagesTimeline.logic";
 
 describe("long active tool groups", () => {
   it.each([false, true])(
@@ -48,4 +52,43 @@ describe("long active tool groups", () => {
       }
     },
   );
+});
+
+describe("file action row labels", () => {
+  it("puts the action and basename before provider detail", () => {
+    const entry = {
+      id: "edit-row",
+      createdAt: "2026-10-24T00:00:00Z",
+      label: "Edited files",
+      detail: "A long provider description of the completed edit",
+      tone: "tool" as const,
+      itemType: "file_change" as const,
+      toolLifecycleStatus: "completed" as const,
+      changedFiles: ["C:\\project\\src\\SectionRail.luau"],
+      toolData: {
+        type: "file_change",
+        changes: [{ operation: "edit", path: "C:\\project\\src\\SectionRail.luau" }],
+      },
+    };
+
+    expect(workEntryDisplayLabel(entry, "C:\\project")).toBe("Edited SectionRail.luau");
+  });
+
+  it("keeps the active edit label truthful", () => {
+    const entry = {
+      id: "active-edit-row",
+      createdAt: "2026-10-24T00:00:00Z",
+      label: "Edited files",
+      tone: "tool" as const,
+      itemType: "file_change" as const,
+      toolLifecycleStatus: "inProgress" as const,
+      changedFiles: ["src/FileName.js"],
+      toolData: {
+        type: "file_change",
+        changes: [{ operation: "edit", path: "src/FileName.js" }],
+      },
+    };
+
+    expect(liveWorkEntryLabel(entry, "/project", true)).toBe("Editing FileName.js");
+  });
 });

@@ -17,6 +17,8 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskUserQuestionInput,
+  FileEditOutput,
+  FileWriteOutput,
   TaskCreateInput,
   TaskCreateOutput,
   TaskListOutput,
@@ -5161,6 +5163,254 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  it.effect("preserves native Claude file-change operations, previews and exact counts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-file-change-metadata"),
+          text: "Edit files.",
+          attachments: [],
+        }),
+      );
+      const editOutput = {
+        filePath: "/workspace/edit.ts",
+        oldString: "same\nold\ntail",
+        newString: "same\nnew\ntail",
+        originalFile: "same\nold\ntail",
+        structuredPatch: [
+          {
+            oldStart: 1,
+            oldLines: 3,
+            newStart: 1,
+            newLines: 3,
+            lines: [" same", "-old", "+new", " tail"],
+          },
+        ],
+        userModified: false,
+        replaceAll: false,
+      } satisfies FileEditOutput;
+      const writeOutput = {
+        type: "update",
+        filePath: "/workspace/write.ts",
+        content: "same\nnew\ntail",
+        originalFile: "same\nold\ntail",
+        structuredPatch: editOutput.structuredPatch,
+      } satisfies FileWriteOutput;
+      const cases = [
+        {
+          id: "edit",
+          name: "Edit",
+          input: { old_string: "requested", new_string: "replacement" },
+          output: editOutput,
+          operation: "edit",
+          additions: 1,
+          deletions: 1,
+          oldStr: editOutput.oldString,
+          newStr: editOutput.newString,
+        },
+        {
+          id: "fallback",
+          name: "Edit",
+          input: { old_string: "same\nold\ntail", new_string: "same\nnew\ntail" },
+          operation: "edit",
+          oldStr: editOutput.oldString,
+          newStr: editOutput.newString,
+        },
+        {
+          id: "write",
+          name: "Write",
+          input: { content: writeOutput.content },
+          output: writeOutput,
+          operation: "update",
+          additions: 1,
+          deletions: 1,
+          oldStr: writeOutput.originalFile,
+          newStr: writeOutput.content,
+        },
+        {
+          id: "write-no-patch",
+          name: "Write",
+          input: { content: writeOutput.content },
+          output: { ...writeOutput, structuredPatch: [] } satisfies FileWriteOutput,
+          operation: "update",
+          additions: 1,
+          deletions: 1,
+          oldStr: writeOutput.originalFile,
+          newStr: writeOutput.content,
+        },
+        {
+          id: "create",
+          name: "Write",
+          input: { content: "one\ntwo\n" },
+          output: {
+            ...writeOutput,
+            type: "create",
+            originalFile: null,
+            content: "one\ntwo\n",
+            structuredPatch: [],
+          } satisfies FileWriteOutput,
+          operation: "create",
+          additions: 2,
+          deletions: 0,
+          oldStr: "",
+          newStr: "one\ntwo\n",
+        },
+        { id: "unknown-write", name: "Write", input: { content: "overwrite" }, operation: "write" },
+        {
+          id: "large-update",
+          name: "Write",
+          input: { content: "overwrite" },
+          output: {
+            ...writeOutput,
+            originalFile: null,
+            structuredPatch: [],
+          } satisfies FileWriteOutput,
+          operation: "update",
+        },
+        {
+          id: "replace-all",
+          name: "Edit",
+          input: { old_string: "old", new_string: "new", replace_all: true },
+          operation: "edit",
+          oldStr: "old",
+          newStr: "new",
+        },
+        {
+          id: "failed",
+          name: "Edit",
+          input: { old_string: "old", new_string: "new" },
+          failed: true,
+        },
+        {
+          id: "staged",
+          name: "Edit",
+          input: { old_string: "old", new_string: "new" },
+          output: { ...editOutput, staged: true } satisfies FileEditOutput,
+          operation: "edit",
+        },
+        {
+          id: "bounded",
+          name: "Edit",
+          input: {},
+          output: {
+            ...editOutput,
+            oldString: "old",
+            newString: "new\n".repeat(400),
+            structuredPatch: [
+              {
+                oldStart: 1,
+                oldLines: 1,
+                newStart: 1,
+                newLines: 400,
+                lines: ["-old", ...Array.from({ length: 400 }, () => `+${"x".repeat(100)}`)],
+              },
+            ],
+          } satisfies FileEditOutput,
+          operation: "edit",
+          additions: 400,
+          deletions: 1,
+          oldStr: "old",
+          newStr: "new\n".repeat(400),
+        },
+      ];
+      let sequence = 18000;
+      const uuid = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`;
+      for (const testCase of cases) {
+        const path = `/workspace/${testCase.id}.ts`;
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              id: `msg_${testCase.id}`,
+              model: "claude-sonnet-4-6",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: `tool-${testCase.id}`,
+                  name: testCase.name,
+                  input: { file_path: path, ...testCase.input },
+                },
+              ],
+              stop_reason: "tool_use",
+              stop_sequence: null,
+              usage: {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+            },
+            parent_tool_use_id: null,
+            uuid: uuid(),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: `tool-${testCase.id}`,
+                  content: testCase.failed ? "Error: old string not found" : "File changed.",
+                  ...(testCase.failed ? { is_error: true } : {}),
+                },
+              ],
+            },
+            ...(testCase.output === undefined
+              ? {}
+              : { tool_use_result: { ...testCase.output, filePath: path } }),
+            parent_tool_use_id: null,
+            uuid: uuid(),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      yield* harness.offerAndWait(makeResultFrame({ uuid: uuid(), result: "Files edited." }));
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      for (const testCase of cases) {
+        const path = `/workspace/${testCase.id}.ts`;
+        const item = harness.events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "file_change" &&
+            event.turnItem.nativeItemRef?.nativeId === `tool-${testCase.id}`
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1)!;
+        assert.isDefined(item, testCase.id);
+        assert.equal(item.fileName, path);
+        assert.deepEqual(
+          item.changes,
+          testCase.operation === undefined ? undefined : [{ operation: testCase.operation, path }],
+          testCase.id,
+        );
+        assert.equal(item.additions, testCase.additions, testCase.id);
+        assert.equal(item.deletions, testCase.deletions, testCase.id);
+        assert.equal(item.oldStr, testCase.oldStr, testCase.id);
+        assert.equal(item.newStr, testCase.newStr, testCase.id);
+        if (testCase.id === "edit")
+          assert.equal(item.diffStr, "@@ -1,3 +1,3 @@\n same\n-old\n+new\n tail");
+        if (testCase.failed) assert.equal(item.diffStr, "Error: old string not found");
+        if (testCase.id === "bounded") assert.isAbove(item.diffStr!.length, 32_768);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>

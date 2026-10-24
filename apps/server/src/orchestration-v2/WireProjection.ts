@@ -41,14 +41,23 @@ function truncateDetail(
  */
 export function boundFileChangeForStorage(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   if (item.type !== "file_change") return item;
-  const { diffStr, oldStr, newStr } = item;
+  const { diffStr, oldStr, newStr, changes } = item;
+  const boundedChanges = changes?.some((change) => truncateDetail(change.diff) !== change.diff)
+    ? changes.map((change) =>
+        change.diff === undefined ? change : { ...change, diff: truncateDetail(change.diff) },
+      )
+    : changes;
   const bounded = {
     ...item,
     ...(diffStr === undefined ? {} : { diffStr: truncateDetail(diffStr) }),
     ...(oldStr === undefined ? {} : { oldStr: truncateDetail(oldStr) }),
     ...(newStr === undefined ? {} : { newStr: truncateDetail(newStr) }),
+    ...(boundedChanges === undefined ? {} : { changes: boundedChanges }),
   };
-  return bounded.diffStr === diffStr && bounded.oldStr === oldStr && bounded.newStr === newStr
+  return bounded.diffStr === diffStr &&
+    bounded.oldStr === oldStr &&
+    bounded.newStr === newStr &&
+    boundedChanges === changes
     ? item
     : bounded;
 }
@@ -111,7 +120,13 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     }
     case "file_change": {
-      const { diffStr, oldStr: _old, newStr: _new, ...projected } = item;
+      const { diffStr, oldStr: _old, newStr: _new, changes, ...rest } = item;
+      const projected = {
+        ...rest,
+        ...(changes === undefined
+          ? {}
+          : { changes: changes.map(({ diff: _diff, ...change }) => change) }),
+      };
       return item.status === "failed" && diffStr?.trim()
         ? { ...projected, diffStr: truncateDetail(diffStr) }
         : projected;
@@ -198,8 +213,10 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
         result:
           item.result === null ? null : (truncateDetail(item.result, MAX_ON_DEMAND_BYTES) ?? null),
       };
-    case "handoff":
     case "file_change":
+      // Expanded rows fetch this to preview the change; storage already bounds the bodies.
+      return boundFileChangeForStorage(item);
+    case "handoff":
       return projectTurnItemForWire(item);
     default:
       return item;

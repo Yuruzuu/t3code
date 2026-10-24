@@ -16,6 +16,7 @@ import {
   commandDisplayText,
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
+import { workEntryFileActionLabel } from "@t3tools/client-runtime/work-log/file-action";
 import {
   contextCompactionLabel,
   liveThoughtLine,
@@ -270,6 +271,8 @@ function compactWorkEntryText(value: string): string {
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+  const fileActionLabel = workEntryFileActionLabel(entry);
+  if (fileActionLabel) return compactWorkEntryText(fileActionLabel);
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -755,7 +758,9 @@ function toWorkLogEntry(
     case "file_change":
       return {
         ...common,
-        changedFiles: [item.fileName],
+        changedFiles: item.changes?.length
+          ? item.changes.map((change) => change.path)
+          : [item.fileName],
         toolTitle: title ?? "File change",
         toolData: item,
       };
@@ -1680,19 +1685,24 @@ function appendToolGroupRows(
         )?.workEntry.detail
       : undefined;
   const thought = latestThought ? liveThoughtLine(latestThought) : "";
-  const summary = live
-    ? (expanded || thought) && latestActivity.workEntry.itemType === "reasoning"
-      ? latestActivity.lifecycleStatus === "inProgress"
-        ? "Thinking"
-        : "Thought"
-      : liveToolActivitySummary(latestActivity, live)
-    : singleActivity !== null &&
-        singleActivity.toolLike &&
-        toolGroupAction(singleActivity.workEntry) !== "edit"
-      ? singleToolCallLabel(singleActivity, expanded)
-      : singleActivity !== null && !singleActivity.toolLike
-        ? singleActivity.workEntry.label
-        : groupSummary.summary;
+  const singleFileActionLabel = singleActivity
+    ? workEntryFileActionLabel(singleActivity.workEntry)
+    : null;
+  const summary = singleFileActionLabel
+    ? compactWorkEntryText(singleFileActionLabel)
+    : live
+      ? (expanded || thought) && latestActivity.workEntry.itemType === "reasoning"
+        ? latestActivity.lifecycleStatus === "inProgress"
+          ? "Thinking"
+          : "Thought"
+        : liveToolActivitySummary(latestActivity, live)
+      : singleActivity !== null &&
+          singleActivity.toolLike &&
+          toolGroupAction(singleActivity.workEntry) !== "edit"
+        ? singleToolCallLabel(singleActivity, expanded)
+        : singleActivity !== null && !singleActivity.toolLike
+          ? singleActivity.workEntry.label
+          : groupSummary.summary;
   const id = shimmer ? LIVE_ACTIVITY_ROW_ID : `${live ? "work-live" : "work-toggle"}:${groupId}`;
   // A lone call needs no header. Its own row takes the header's place, label
   // and identity, and discloses its details directly. A lone thought keeps the

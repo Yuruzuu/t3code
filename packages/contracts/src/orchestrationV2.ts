@@ -1233,6 +1233,10 @@ export const OrchestrationV2FileChangeDetail = Schema.Struct({
   oldPath: Schema.optional(TrimmedNonEmptyString),
   fileType: Schema.optional(TrimmedNonEmptyString),
   mimeType: Schema.optional(TrimmedNonEmptyString),
+  /** This file's part of a multi-file patch; omitted on the wire like the item's `diffStr`. */
+  diff: Schema.optional(Schema.String),
+  additions: Schema.optional(NonNegativeInt),
+  deletions: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2FileChangeDetail = typeof OrchestrationV2FileChangeDetail.Type;
 

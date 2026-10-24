@@ -904,6 +904,60 @@ describe("V2 session presentation", () => {
     }
   });
 
+  it("shows each file of a multi-file patch as its own row", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const threadId = ThreadId.make("thread-multi-file-patch");
+    const item = {
+      id: TurnItemId.make("item-patch"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "file_change" as const,
+      fileName: "src/a.ts",
+      additions: 3,
+      deletions: 1,
+      changes: [
+        { operation: "update", path: "src/a.ts", additions: 1, deletions: 1 },
+        { operation: "add", path: "src/b.ts", additions: 2, deletions: 0 },
+      ],
+    } satisfies OrchestrationV2TurnItem;
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        { position: 0, visibility: "local", sourceThreadId: threadId, sourceItemId: item.id, item },
+      ],
+      optimisticMessages: [],
+    });
+
+    expect(
+      entries.map((entry) =>
+        entry.kind === "work"
+          ? {
+              id: entry.id,
+              changedFiles: entry.entry.changedFiles,
+              additions:
+                entry.entry.structuredPayload?.type === "file_change"
+                  ? entry.entry.structuredPayload.additions
+                  : null,
+            }
+          : entry.kind,
+      ),
+    ).toEqual([
+      { id: "item-patch#file-0", changedFiles: ["src/a.ts"], additions: 1 },
+      { id: "item-patch#file-1", changedFiles: ["src/b.ts"], additions: 2 },
+    ]);
+  });
+
   it("resolves attempt identity through V2 execution nodes", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-attempts");

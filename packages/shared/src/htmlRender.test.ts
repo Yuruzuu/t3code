@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  htmlRenderFitHeight,
+  htmlRenderFrameHeight,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
+  readHtmlRenderReference,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
@@ -130,5 +133,35 @@ describe("htmlRenderFromToolItem", () => {
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
+  });
+});
+
+describe("frame heights", () => {
+  // An agent's height of 2000 for a page measured near 7000px at publish.
+  const longPage = readHtmlRenderReference({
+    attachmentId: "thread-long.html",
+    title: "Ideas",
+    height: 2000,
+    heights: [
+      [640, 7348],
+      [728, 7076],
+      [860, 6990],
+    ],
+  })!;
+
+  it("starts a web frame at the published height of a long page, not the agent's cap", () => {
+    expect(htmlRenderFitHeight(longPage, 728)).toBe(7076);
+    expect(htmlRenderFitHeight(longPage, 700)).toBe(7348);
+  });
+
+  it("fits the live page once it reports, up to the fit limit", () => {
+    expect(htmlRenderFitHeight(longPage, 728, 7140.2)).toBe(7141);
+    expect(htmlRenderFitHeight(longPage, 728, 50_000)).toBe(20_000);
+  });
+
+  it("keeps mobile capped at the agent's height", () => {
+    expect(htmlRenderFrameHeight(longPage, 728)).toBe(2000);
+    const shortCap = readHtmlRenderReference({ ...longPage, height: 900 })!;
+    expect(htmlRenderFrameHeight(shortCap, 728)).toBe(900);
   });
 });

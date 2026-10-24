@@ -25,6 +25,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
+import { fileChangeItemsByFile } from "@t3tools/client-runtime/work-log/file-change-preview";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import {
@@ -786,6 +787,21 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         projectedItem: row,
         ...attemptMetadata,
+      });
+      continue;
+    }
+
+    if (item.type === "file_change" && (item.changes?.length ?? 0) > 1) {
+      // A multi-file patch reads as one row per file; each row still fetches the whole item.
+      fileChangeItemsByFile(item).forEach((fileItem, index) => {
+        const id = `${item.id}#file-${index}`;
+        entries.push({
+          id,
+          kind: "work",
+          createdAt,
+          entry: { ...projectedWorkEntry({ ...row, item: fileItem }), id },
+          ...attemptMetadata,
+        });
       });
       continue;
     }
