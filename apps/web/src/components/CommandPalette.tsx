@@ -64,6 +64,7 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
+  MessagesSquareIcon,
   PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
@@ -1464,6 +1465,17 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push(changeAppearanceItem);
 
   actionItems.push(themeEditorItem);
+
+  actionItems.push({
+    kind: "action",
+    value: "action:boards",
+    searchTerms: ["boards", "channels", "messages", "posts", "discussions"],
+    title: "Open boards",
+    icon: <MessagesSquareIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/boards" });
+    },
+  });
 
   if (environments.some((environment) => environment.serverConfig !== null)) {
     actionItems.push({

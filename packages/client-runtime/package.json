@@ -11,6 +11,10 @@
       "types": "./src/zip/zipDirectory.ts",
       "default": "./src/zip/zipDirectory.ts"
     },
+    "./message-board": {
+      "types": "./src/messageBoard/index.ts",
+      "default": "./src/messageBoard/index.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
