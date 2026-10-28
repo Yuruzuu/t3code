@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./message-board": {
+      "types": "./src/messageBoard/index.ts",
+      "default": "./src/messageBoard/index.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"

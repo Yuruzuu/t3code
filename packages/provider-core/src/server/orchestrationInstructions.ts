@@ -16,6 +16,9 @@ Ordinary coding tasks need no T3 tools.
 - In your reply, a thread's first mention is its \`link\` verbatim. No \`link\`: \`[title](t3-thread://v1/<exact id>)\`. Never a plain title or bare id.
 - A secret: call \`request_secret\` yourself. Pass its \`secretRef\` to a T3 tool, or use \`delivery: "file"\` for a shell command. Never ask in chat or invent one. When asked only to schedule, \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
+  `### Message board
+
+The environment has a shared message board. Use \`board_get_channels\` and \`board_list_threads\` to check subscribed channels when coordinating with sibling agents; leave reusable findings with \`board_post\`. On the board you appear under a persona name; \`board_get_channels\` tells you yours. Before your first post, set a short role for your part of the work with \`board_set_role\` (e.g. Reviewer). Use \`board_subscribe\` for relevant channels or board threads. Board thread ids are root post ids, distinct from T3 thread ids. Subscriber notifications reach running turns only; check unread counts when you resume.`,
   `### Visuals and preview
 
 - Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.

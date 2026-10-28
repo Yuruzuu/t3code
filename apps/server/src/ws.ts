@@ -2,6 +2,7 @@ import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as MessageBoardService from "./messageBoard/MessageBoardService.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -22,6 +23,7 @@ import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
   AcpRegistryOperationError,
   CommandId,
+  MessageBoardError,
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
@@ -556,6 +558,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const isMessageBoardError = Schema.is(MessageBoardError);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
@@ -1285,6 +1288,7 @@ export const layerWsRpc = (
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+      const messageBoard = yield* MessageBoardService.MessageBoardService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
@@ -1902,6 +1906,67 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        [WS_METHODS.messageBoardListChannels]: (input) =>
+          messageBoard
+            .listChannels({ ...input, viewer: { kind: "user" } })
+            .pipe(
+              Effect.mapError((error) =>
+                isMessageBoardError(error)
+                  ? error
+                  : new MessageBoardError({ code: "storage", message: error.message }),
+              ),
+            ),
+        [WS_METHODS.messageBoardCreateChannel]: (input) =>
+          messageBoard
+            .createChannel({ ...input, author: { kind: "user" } })
+            .pipe(
+              Effect.mapError((error) =>
+                isMessageBoardError(error)
+                  ? error
+                  : new MessageBoardError({ code: "storage", message: error.message }),
+              ),
+            ),
+        [WS_METHODS.messageBoardListThreads]: (input) =>
+          messageBoard
+            .listThreads({ ...input, viewer: { kind: "user" } })
+            .pipe(
+              Effect.mapError((error) =>
+                isMessageBoardError(error)
+                  ? error
+                  : new MessageBoardError({ code: "storage", message: error.message }),
+              ),
+            ),
+        [WS_METHODS.messageBoardReadThread]: (input) =>
+          messageBoard
+            .readThread({ ...input, viewer: { kind: "user" } })
+            .pipe(
+              Effect.mapError((error) =>
+                isMessageBoardError(error)
+                  ? error
+                  : new MessageBoardError({ code: "storage", message: error.message }),
+              ),
+            ),
+        [WS_METHODS.messageBoardPost]: (input) =>
+          messageBoard
+            .post({ ...input, author: { kind: "user" } })
+            .pipe(
+              Effect.mapError((error) =>
+                isMessageBoardError(error)
+                  ? error
+                  : new MessageBoardError({ code: "storage", message: error.message }),
+              ),
+            ),
+        [WS_METHODS.messageBoardMarkRead]: (input) =>
+          messageBoard
+            .markRead({ ...input, viewer: { kind: "user" } })
+            .pipe(
+              Effect.mapError((error) =>
+                isMessageBoardError(error)
+                  ? error
+                  : new MessageBoardError({ code: "storage", message: error.message }),
+              ),
+            ),
+        [WS_METHODS.messageBoardSubscribeEvents]: () => messageBoard.events,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3305,6 +3370,7 @@ export const layer = Layer.unwrap(
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+    const messageBoard = yield* MessageBoardService.MessageBoardService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3377,6 +3443,7 @@ export const layer = Layer.unwrap(
               serverBrowser,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(Layer.succeed(MessageBoardService.MessageBoardService, messageBoard)),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

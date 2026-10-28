@@ -27,6 +27,20 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
+import {
+  BoardChannel,
+  BoardEvent,
+  BoardPost,
+  BoardThreadDetail,
+  MessageBoardCreateChannelInput,
+  MessageBoardError,
+  MessageBoardListChannelsInput,
+  MessageBoardListThreadsInput,
+  MessageBoardListThreadsResult,
+  MessageBoardMarkReadInput,
+  MessageBoardPostInput,
+  MessageBoardReadThreadInput,
+} from "./messageBoard.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
@@ -382,6 +396,13 @@ import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
+  messageBoardListChannels: "messageBoard.listChannels",
+  messageBoardCreateChannel: "messageBoard.createChannel",
+  messageBoardListThreads: "messageBoard.listThreads",
+  messageBoardReadThread: "messageBoard.readThread",
+  messageBoardPost: "messageBoard.post",
+  messageBoardMarkRead: "messageBoard.markRead",
+  messageBoardSubscribeEvents: "messageBoard.subscribeEvents",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -1915,6 +1936,42 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  Rpc.make(WS_METHODS.messageBoardListChannels, {
+    payload: MessageBoardListChannelsInput,
+    success: Schema.Array(BoardChannel),
+    error: MessageBoardError,
+  }),
+  Rpc.make(WS_METHODS.messageBoardCreateChannel, {
+    payload: MessageBoardCreateChannelInput,
+    success: BoardChannel,
+    error: MessageBoardError,
+  }),
+  Rpc.make(WS_METHODS.messageBoardListThreads, {
+    payload: MessageBoardListThreadsInput,
+    success: MessageBoardListThreadsResult,
+    error: MessageBoardError,
+  }),
+  Rpc.make(WS_METHODS.messageBoardReadThread, {
+    payload: MessageBoardReadThreadInput,
+    success: BoardThreadDetail,
+    error: MessageBoardError,
+  }),
+  Rpc.make(WS_METHODS.messageBoardPost, {
+    payload: MessageBoardPostInput,
+    success: BoardPost,
+    error: MessageBoardError,
+  }),
+  Rpc.make(WS_METHODS.messageBoardMarkRead, {
+    payload: MessageBoardMarkReadInput,
+    success: Schema.Void,
+    error: MessageBoardError,
+  }),
+  Rpc.make(WS_METHODS.messageBoardSubscribeEvents, {
+    payload: Schema.Struct({}),
+    success: BoardEvent,
+    error: MessageBoardError,
+    stream: true,
+  }),
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
