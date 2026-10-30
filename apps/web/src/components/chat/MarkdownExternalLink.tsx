@@ -1,4 +1,4 @@
-import { Children, Fragment, type ReactNode } from "react";
+import { Children, type ReactNode } from "react";
 
 import { MarkdownLinkFavicon } from "./MarkdownLinkFavicon";
 
@@ -8,18 +8,16 @@ function leadingExternalLinkTextLength(text: string): number {
   return Math.min(text.length, 1);
 }
 
-// Long words such as URLs can break after any character so they fit narrow
-// table columns. Short ones, like a PR number, stay whole.
+// Keep short labels such as PR numbers intact in narrow table columns.
 function breakableExternalLinkText(text: string): ReactNode[] {
   return Array.from(text.matchAll(/\s+|\S+/g), ({ 0: word, index: start }) =>
-    word.length <= 16
-      ? word
-      : Array.from(word, (character, offset) => (
-          <Fragment key={`${start + offset}:${character}`}>
-            {character}
-            <wbr />
-          </Fragment>
-        )),
+    word.length <= 16 ? (
+      word
+    ) : (
+      <span key={start} className="[overflow-wrap:anywhere]">
+        {word}
+      </span>
+    ),
   );
 }
 
@@ -64,7 +62,7 @@ export function MarkdownExternalLinkContent({
 
   return (
     <>
-      <span className="whitespace-nowrap">
+      <span className="[overflow-wrap:anywhere]">
         <MarkdownLinkFavicon host={host} />
         {firstChild}
       </span>
