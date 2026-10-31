@@ -16,6 +16,7 @@ function slashCommandDecorations(
   const block = doc.firstChild;
   const first = block?.firstChild;
   // A marked or fenced token serializes with its markers, so it no longer opens the prompt.
+  // That includes a token only partly marked, which runs past the first unmarked text node.
   if (block?.type.name !== "paragraph" || !first?.text?.startsWith("/") || first.marks.length > 0) {
     return DecorationSet.empty;
   }
@@ -23,7 +24,7 @@ function slashCommandDecorations(
     leaf.type.name === "hardBreak" ? "\n" : "\ufffc",
   );
   const command = leadingSlashCommand(text, commands);
-  if (!command) return DecorationSet.empty;
+  if (!command || command.length > first.nodeSize) return DecorationSet.empty;
   return DecorationSet.create(doc, [
     Decoration.inline(1, 1 + command.length, { class: "text-info-foreground" }),
   ]);

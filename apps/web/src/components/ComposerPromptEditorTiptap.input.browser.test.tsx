@@ -464,6 +464,8 @@ describe("a slash command opening the prompt", () => {
       ["`/btw`", true, null],
       ["**/btw**", true, null],
       ["/btw**x**", true, null],
+      ["/bt**w** why?", true, null],
+      ["/btw **why?**", true, "/btw"],
       ["```\n/btw\n```", true, null],
     ];
     for (const [prompt, richText, colored] of cases) {
