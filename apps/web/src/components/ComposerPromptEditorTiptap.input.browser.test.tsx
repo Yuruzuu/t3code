@@ -450,8 +450,11 @@ describe("an Arabic line", () => {
 
 describe("a slash command opening the prompt", () => {
   const commands = [{ name: "btw" }];
-  const coloredText = (editor: Editor) =>
-    editor.view.dom.querySelector(".text-info-foreground")?.textContent ?? null;
+  const expectColored = (editor: Editor, colored: string | null, message?: string) =>
+    vi.waitFor(() => {
+      const text = editor.view.dom.querySelector(".text-info-foreground")?.textContent ?? null;
+      expect(text, message).toBe(colored);
+    });
 
   it("is colored only while it would run as a command", async () => {
     const cases: ReadonlyArray<[prompt: string, richText: boolean, colored: string | null]> = [
@@ -470,8 +473,10 @@ describe("a slash command opening the prompt", () => {
     ];
     for (const [prompt, richText, colored] of cases) {
       await using screen = await mountEditor(prompt, richText, [], undefined, commands);
-      expect(coloredText(screen.editor), prompt).toBe(colored);
-      expect(screen.editor.view.dom.textContent, prompt).toContain("btw");
+      await expectColored(screen.editor, colored, prompt);
+      await vi.waitFor(() => {
+        expect(screen.editor.view.dom.textContent, prompt).toContain("btw");
+      });
     }
   });
 
@@ -481,15 +486,15 @@ describe("a slash command opening the prompt", () => {
     await act(async () => {
       screen.editor.commands.insertContentAt(5, "x");
     });
-    expect(coloredText(screen.editor)).toBeNull();
+    await expectColored(screen.editor, null);
     await act(async () => {
       screen.editor.commands.deleteRange({ from: 5, to: 6 });
     });
-    expect(coloredText(screen.editor)).toBe("/btw");
+    await expectColored(screen.editor, "/btw");
 
     onChange.mockClear();
     const editor = await screen.update("/btw", true, [], onChange, []);
-    expect(coloredText(editor)).toBeNull();
+    await expectColored(editor, null);
     expect(onChange).not.toHaveBeenCalled();
   });
 });

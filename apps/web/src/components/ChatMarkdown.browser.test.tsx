@@ -135,9 +135,11 @@ it("colors a leading command only where it opens the text", async () => {
     lineBreaks: true,
     parseRawHtml: false,
   });
-  const colored = screen.container.querySelectorAll(".text-info-foreground");
-  expect([...colored].map((node) => node.textContent)).toEqual(["/compact"]);
-  expect(screen.container.querySelector("p")?.textContent).toBe("/compact now");
+  await vi.waitFor(() => {
+    const colored = screen.container.querySelectorAll(".text-info-foreground");
+    expect([...colored].map((node) => node.textContent)).toEqual(["/compact"]);
+    expect(screen.container.querySelector("p")?.textContent).toBe("/compact now");
+  });
 });
 
 it("shows unavailable audio when a workspace embed has no thread", async () => {
