@@ -1,9 +1,7 @@
 import {
   MessageBoardError,
-  type BoardAuthor,
   type BoardChannel,
-  type BoardPost,
-  type BoardThreadSummary,
+  type MessageBoardTodosResult,
   type ThreadId,
 } from "@t3tools/contracts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
@@ -11,19 +9,20 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as MessageBoardService from "../../../messageBoard/MessageBoardService.ts";
-import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as MessageBoardAgentReader from "../../../messageBoard/MessageBoardAgentReader.ts";
+import {
+  namedAuthor,
+  namedPost,
+  namedTodo,
+} from "../../../messageBoard/MessageBoardAgentReader.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import {
   type BoardTargetInput,
   MessageBoardDestinationError,
   MessageBoardToolkit,
   MessageBoardToolError,
 } from "./tools.ts";
-
-const namedAuthor = (author: BoardAuthor) =>
-  author.kind === "agent" ? { ...author, name: boardPersona(author.threadId).name } : author;
 
 const namedChannel = ({
   latestPost: _latestPost,
@@ -34,19 +33,9 @@ const namedChannel = ({
   createdBy: namedAuthor(channel.createdBy),
 });
 
-const namedPost = (post: BoardPost) => ({ ...post, author: namedAuthor(post.author) });
-
-const postPreview = (post: BoardPost, maxChars = 1_000) => ({
-  ...namedPost(post),
-  text: post.text.length > maxChars ? `${post.text.slice(0, maxChars)}…` : post.text,
-  textTruncated: post.text.length > maxChars,
-});
-
-const threadPreview = (thread: BoardThreadSummary) => ({
-  ...thread,
-  root: postPreview(thread.root),
-  latestReply: thread.latestReply === null ? null : postPreview(thread.latestReply),
-  participants: thread.participants.map(namedAuthor),
+const namedTodos = (result: MessageBoardTodosResult) => ({
+  ...result,
+  todos: result.todos.map(namedTodo),
 });
 
 const resolveTarget = Effect.fn("MessageBoardToolkit.resolveTarget")(function* (
@@ -69,14 +58,14 @@ const caller = Effect.fn("MessageBoardToolkit.caller")(function* () {
   };
 });
 
+const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const isMessageBoardError = Schema.is(MessageBoardError);
 const boardFailure = (operation: string) => (cause: unknown) =>
   isMessageBoardError(cause) ? cause : new MessageBoardToolError({ operation, cause });
 
 const make = Effect.gen(function* () {
   const board = yield* MessageBoardService.MessageBoardService;
-  const orchestration = yield* OrchestratorMcpService.OrchestratorMcpService;
-  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const reader = yield* MessageBoardAgentReader.MessageBoardAgentReader;
 
   /** The caller, or another agent's thread once it is known to exist. */
   const subscriptionViewer = Effect.fn("MessageBoardToolkit.subscriptionViewer")(function* (
@@ -89,6 +78,70 @@ const make = Effect.gen(function* () {
   });
 
   return {
+    board_read_handling: McpToolAccess.readsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .readHandling({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("readHandling")));
+      }),
+    ),
+    board_assign_lead: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .assignLead({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("assignLead")));
+      }),
+    ),
+    board_update_context: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .updateContext({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("updateContext")));
+      }),
+    ),
+    board_reassign_request: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .reassignRequest({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("reassignRequest")));
+      }),
+    ),
+    board_resume_request: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .resumeRequest({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("resumeRequest")));
+      }),
+    ),
+    board_report_outcome: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .reportOutcome({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("reportOutcome")));
+      }),
+    ),
+    board_close_discussion: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .closeDiscussion({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("closeDiscussion")));
+      }),
+    ),
+    board_reopen_discussion: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .reopenDiscussion({ ...input, viewer })
+          .pipe(Effect.mapError(boardFailure("reopenDiscussion")));
+      }),
+    ),
     board_set_role: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const { viewer } = yield* caller();
@@ -157,6 +210,12 @@ const make = Effect.gen(function* () {
             destination:
               target.kind === "channel" ? target : { kind: "reply", rootId: target.rootId },
             text: input.text,
+            ...(input.mode === undefined ? {} : { mode: input.mode }),
+            ...(input.expectedRevision === undefined
+              ? {}
+              : { expectedRevision: input.expectedRevision }),
+            ...(input.request_key === undefined ? {} : { requestKey: input.request_key }),
+            ...(input.reply_to === undefined ? {} : { replyToId: input.reply_to }),
           })
           .pipe(Effect.mapError(boardFailure("append")));
         return { post: namedPost(post) };
@@ -165,7 +224,7 @@ const make = Effect.gen(function* () {
     board_list_threads: McpToolAccess.readsAsCaller((input) =>
       Effect.gen(function* () {
         const { viewer } = yield* caller();
-        const result = yield* board
+        const result = yield* reader
           .listThreads({
             viewer,
             channelName: input.channel_name,
@@ -174,121 +233,188 @@ const make = Effect.gen(function* () {
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           })
           .pipe(Effect.mapError(boardFailure("listThreads")));
-        return { ...result, threads: result.threads.map(threadPreview) };
+        return result;
       }),
     ),
     board_read_thread: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const { viewer } = yield* caller();
-        const result = yield* board
-          .readThread({ viewer, rootId: input.thread_id })
+        return yield* reader
+          .readThread({
+            viewer,
+            rootId: input.thread_id,
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          })
           .pipe(Effect.mapError(boardFailure("readThread")));
-        yield* board
-          .markRead({ viewer, rootId: result.summary.root.id })
-          .pipe(Effect.mapError(boardFailure("markRead")));
-        let remaining = 24_000;
-        const selected =
-          result.posts.length > 50 ? [result.posts[0]!, ...result.posts.slice(-49)] : result.posts;
-        const posts = selected.map((post) => {
-          const preview = postPreview(post, Math.min(4_000, remaining));
-          remaining = Math.max(0, remaining - preview.text.length);
-          return preview;
-        });
-        return {
-          summary: { ...threadPreview(result.summary), unread: false },
-          members: result.members.map((member) => ({
-            ...member,
-            author: namedAuthor(member.author),
-          })),
-          posts,
-          postsOmitted: result.posts.length - posts.length,
-        };
       }),
     ),
-    board_read_post: McpToolAccess.readsAsCaller((input) =>
-      board
-        .readPost({ postId: input.message_id })
-        .pipe(Effect.map(namedPost), Effect.mapError(boardFailure("readPost"))),
+    board_read_post: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* reader
+          .readPost({
+            viewer,
+            postId: input.message_id,
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          })
+          .pipe(Effect.mapError(boardFailure("readPost")));
+      }),
     ),
     board_search_posts: McpToolAccess.readsAsCaller((input) =>
+      reader
+        .search({
+          ...(input.query === undefined ? {} : { query: input.query }),
+          ...(input.channel_name === undefined ? {} : { channelName: input.channel_name }),
+          ...(input.thread_id === undefined ? {} : { rootId: input.thread_id }),
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          limit: input.limit ?? 20,
+        })
+        .pipe(Effect.mapError(boardFailure("searchPosts"))),
+    ),
+    board_wait: McpToolAccess.readsAsCaller((input) =>
       Effect.gen(function* () {
         const { viewer } = yield* caller();
         const posts = yield* board
-          .searchPosts({
+          .waitForPosts({
             viewer,
-            ...(input.query === undefined ? {} : { query: input.query }),
-            ...(input.channel_name === undefined ? {} : { channelName: input.channel_name }),
-            limit: input.limit ?? 20,
+            rootId: input.thread_id,
+            timeoutMs: input.timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS,
           })
-          .pipe(Effect.mapError(boardFailure("searchPosts")));
-        return { posts: posts.map((post) => postPreview(post)) };
+          .pipe(Effect.mapError(boardFailure("waitForPosts")));
+        return {
+          posts: posts.map(MessageBoardAgentReader.previewPost),
+          timedOut: posts.length === 0,
+        };
       }),
     ),
     board_post: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        const { scope, viewer } = yield* caller();
+        const { viewer } = yield* caller();
         const author = yield* board
           .agentAuthor(viewer.threadId)
           .pipe(Effect.mapError(boardFailure("agentAuthor")));
-        const post = yield* board
-          .post({
+        const result = yield* board
+          .postAndNotify({
             author,
             destination:
               target.kind === "channel" ? target : { kind: "reply", rootId: target.rootId },
             text: input.text,
+            ...(input.mode === undefined ? {} : { mode: input.mode }),
+            ...(input.expectedRevision === undefined
+              ? {}
+              : { expectedRevision: input.expectedRevision }),
+            ...(input.request_key === undefined ? {} : { requestKey: input.request_key }),
+            ...(input.reply_to === undefined ? {} : { replyToId: input.reply_to }),
+            ...(input.notify_threads === undefined ? {} : { notifyThreads: input.notify_threads }),
           })
           .pipe(Effect.mapError(boardFailure("post")));
-        yield* board
-          .subscribe({ viewer, target: { kind: "thread", rootId: post.rootId } })
-          .pipe(Effect.mapError(boardFailure("subscribe")));
-        const subscriptions = yield* board.listSubscribers(target).pipe(Effect.result);
-        const subscribers = subscriptions._tag === "Success" ? subscriptions.success : [];
-        const explicit = new Set(input.notify_threads ?? []);
-        const recipients = new Set([
-          ...explicit,
-          ...subscribers.flatMap((subscriber) =>
-            subscriber.kind === "thread" ? [subscriber.threadId] : [],
-          ),
-        ]);
-        recipients.delete(viewer.threadId);
-        const notifiedThreads: Array<ThreadId> = [];
-        const skippedThreads: Array<ThreadId> = [];
-        const label =
-          author.kind === "agent"
-            ? `${boardPersona(author.threadId).name} (${author.threadId})`
-            : "user";
-        const text = post.text.replace(/\s+/g, " ");
-        const message = `New post in #${post.channelName} by ${label}: ${text.slice(0, 240)}${text.length > 240 ? "…" : ""}. Read with board_read_thread ${post.rootId}`;
-        for (const threadId of recipients) {
-          const delivered = yield* Effect.gen(function* () {
-            if (!explicit.has(threadId)) {
-              const thread = yield* threads.getThreadShell(threadId);
-              if (thread === null || thread.activeRunId === null || thread.status !== "running") {
-                return false;
-              }
-            }
-            yield* orchestration.sendToThread(scope, {
-              threadId,
-              message,
-              mode: explicit.has(threadId) ? "auto" : "steer",
-              clientRequestId: `board:${post.id}:${threadId}`,
-            });
-            return true;
-          }).pipe(Effect.orElseSucceed(() => false));
-          (delivered ? notifiedThreads : skippedThreads).push(threadId);
-        }
         return {
-          post: namedPost(post),
-          notifiedThreads,
-          skippedThreads,
-          ...(subscriptions._tag === "Failure"
+          post: namedPost(result.post),
+          notifiedThreads: result.notifiedThreads,
+          skippedThreads: result.skippedThreads,
+          coalescedThreads: result.coalescedThreads,
+          ...(result.notificationFailed
             ? {
                 notificationWarning:
                   "Post saved, but subscriber notifications could not be loaded.",
               }
             : {}),
         };
+      }),
+    ),
+    board_react: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        const active = input.remove !== true;
+        yield* board
+          .react({ viewer, postId: input.message_id, emoji: input.emoji, active })
+          .pipe(Effect.mapError(boardFailure("react")));
+        return { message_id: input.message_id, emoji: input.emoji, active };
+      }),
+    ),
+    board_read_todos: McpToolAccess.readsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        if (input.query.type === "get")
+          return yield* board
+            .getTodo({ rootId: input.thread_id, todoId: input.query.todoId, viewer })
+            .pipe(
+              Effect.catchTags({ MessageBoardError: (error) => Effect.succeed({ error }) }),
+              Effect.mapError(boardFailure("readTodos")),
+            );
+        return yield* board
+          .listTodos({
+            rootId: input.thread_id,
+            viewer,
+            ...(input.query.filter === undefined ? {} : { filter: input.query.filter }),
+            ...(input.query.limit === undefined ? {} : { limit: input.query.limit }),
+            ...(input.query.cursor === undefined ? {} : { cursor: input.query.cursor }),
+          })
+          .pipe(
+            Effect.catchTags({ MessageBoardError: (error) => Effect.succeed({ error }) }),
+            Effect.mapError(boardFailure("readTodos")),
+          );
+      }),
+    ),
+    board_todo_action: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { viewer } = yield* caller();
+        return yield* board
+          .applyTodoAction({
+            rootId: input.thread_id,
+            requestKey: input.request_key,
+            action: input.action,
+            viewer,
+          })
+          .pipe(
+            Effect.catchTags({ MessageBoardError: (error) => Effect.succeed({ error }) }),
+            Effect.mapError(boardFailure("todoAction")),
+          );
+      }),
+    ),
+    board_create_todo: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        yield* caller();
+        return yield* board
+          .createTodo({
+            rootId: input.thread_id,
+            text: input.text,
+            ...(input.assignee_thread === undefined
+              ? {}
+              : { assigneeThreadId: input.assignee_thread }),
+          })
+          .pipe(Effect.map(namedTodos), Effect.mapError(boardFailure("createTodo")));
+      }),
+    ),
+    board_update_todo: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        yield* caller();
+        return yield* board
+          .updateTodo({
+            rootId: input.thread_id,
+            todoId: input.todo_id,
+            ...(input.text === undefined ? {} : { text: input.text }),
+            ...(input.status === undefined ? {} : { status: input.status }),
+            ...(input.assignee_thread === undefined
+              ? {}
+              : { assigneeThreadId: input.assignee_thread }),
+            ...(input.expected_assignee_thread === undefined
+              ? {}
+              : { expectedAssigneeThreadId: input.expected_assignee_thread }),
+            ...(input.expected_status === undefined
+              ? {}
+              : { expectedStatus: input.expected_status }),
+          })
+          .pipe(Effect.map(namedTodos), Effect.mapError(boardFailure("updateTodo")));
+      }),
+    ),
+    board_delete_todo: McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        yield* caller();
+        return yield* board
+          .deleteTodo({ rootId: input.thread_id, todoId: input.todo_id })
+          .pipe(Effect.map(namedTodos), Effect.mapError(boardFailure("deleteTodo")));
       }),
     ),
     board_subscribe: McpToolAccess.actsAsCaller((input) =>

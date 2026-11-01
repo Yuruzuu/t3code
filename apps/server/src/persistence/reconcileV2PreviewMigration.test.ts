@@ -52,6 +52,15 @@ describe("V2 preview upgrade", () => {
         [70, "PeerLinks"],
         [71, "PeerLinkFence"],
         [72, "WaitingLinkRequestIndex"],
+        [73, "MessageBoard"],
+        [74, "MessageBoardRoles"],
+        [75, "MessageBoardThreadReads"],
+        [76, "MessageBoardSubscriptionOptOut"],
+        [77, "MessageBoardRepliesReactions"],
+        [78, "MessageBoardPostWorkedMs"],
+        [79, "MessageBoardPostRunId"],
+        [80, "MessageBoardTodos"],
+        [81, "MessageBoardDeliveryAndRequests"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -147,6 +156,15 @@ describe("V2 preview upgrade", () => {
         [70, "PeerLinks"],
         [71, "PeerLinkFence"],
         [72, "WaitingLinkRequestIndex"],
+        [73, "MessageBoard"],
+        [74, "MessageBoardRoles"],
+        [75, "MessageBoardThreadReads"],
+        [76, "MessageBoardSubscriptionOptOut"],
+        [77, "MessageBoardRepliesReactions"],
+        [78, "MessageBoardPostWorkedMs"],
+        [79, "MessageBoardPostRunId"],
+        [80, "MessageBoardTodos"],
+        [81, "MessageBoardDeliveryAndRequests"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

@@ -1,3 +1,5 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as MessageBoardHandlingEvents from "../messageBoard/MessageBoardHandlingEvents.ts";
 import { assert, it } from "@effect/vitest";
 import { CheckpointScopeId, CommandId, GitCommandError, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -81,8 +83,13 @@ it.effect.each([
     ),
   );
   const executor = EffectWorker.layerExecutor.pipe(
+    Layer.provide(projections),
+    Layer.provide(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
     Layer.provide(
       Layer.mergeAll(
+        SqlitePersistence.layerMemory,
+        NodeCrypto.layer,
+        MessageBoardHandlingEvents.layer,
         finalization,
         Layer.mock(ProviderSessions.ProviderSessionManagerV2)({}),
         Layer.mock(ProviderTurnControl.ProviderTurnControlServiceV2)({}),
@@ -98,7 +105,10 @@ it.effect.each([
     ),
   );
   const outbox = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
-  const worker = EffectWorker.layer.pipe(Layer.provideMerge(Layer.merge(executor, outbox)));
+  const worker = EffectWorker.layer.pipe(
+    Layer.provide(projections),
+    Layer.provideMerge(Layer.merge(executor, outbox)),
+  );
 
   return Effect.gen(function* () {
     const queue = yield* EffectOutbox.EffectOutboxV2;

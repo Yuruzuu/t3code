@@ -71,6 +71,7 @@ import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as MessageBoardHandlers from "./toolkits/messageBoard/handlers.ts";
+import * as MessageBoardAgentReader from "../messageBoard/MessageBoardAgentReader.ts";
 import { MessageBoardToolkit } from "./toolkits/messageBoard/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
@@ -1127,7 +1128,7 @@ export const layerPullRequestsToolkit = toolkitRegistration(
 const layerMessageBoardToolkit = toolkitRegistration(
   MessageBoardToolkit,
   MessageBoardHandlers.layer,
-).pipe(Layer.provide(OrchestratorMcpService.layer), Layer.provide(ProjectionStore.layer));
+).pipe(Layer.provide(MessageBoardAgentReader.layer), Layer.provide(ProjectionStore.layer));
 
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,

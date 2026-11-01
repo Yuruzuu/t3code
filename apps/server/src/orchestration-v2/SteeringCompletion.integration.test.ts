@@ -43,13 +43,19 @@ it.effect.each(
       [true, "with interrupting native steering"],
       [true, "settled only"],
       [false, "during continuation"],
+      [false, "before dispatch", true],
+      [false, "during delivery", true],
+      [false, "after delivery", true],
+      [false, "without native steering", true],
+      [false, "with interrupting native steering", true],
     ] as const
-  ).map(([mailbox, timing]) => ({
+  ).map(([mailbox, timing, notificationOnly = false]) => ({
     mailbox,
     timing,
-    label: mailbox ? "mailbox notification" : "steering",
+    notificationOnly,
+    label: notificationOnly ? "run-bound notice" : mailbox ? "mailbox notification" : "steering",
   })),
-)("delivers $label when completion wins $timing", ({ mailbox, timing }) =>
+)("delivers $label when completion wins $timing", ({ mailbox, timing, notificationOnly }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`steering-completion-${timing.replaceAll(" ", "-")}`);
@@ -274,6 +280,7 @@ it.effect.each(
             : { type: "steer_active", targetRunId: first.runId },
           createdBy: mailbox ? "agent" : "user",
           creationSource: mailbox ? "server" : "web",
+          ...(notificationOnly ? { notificationOnly: true as const } : {}),
           ...(mailbox
             ? {
                 delegatedCompletion: {
@@ -284,7 +291,15 @@ it.effect.each(
               }
             : {}),
         });
-        if (timing !== "before dispatch") yield* dispatchSteer;
+        const refusedNotice =
+          notificationOnly &&
+          (timing === "before dispatch" ||
+            timing === "without native steering" ||
+            timing === "with interrupting native steering");
+        if (timing !== "before dispatch") {
+          const result = yield* dispatchSteer.pipe(Effect.result);
+          assert.equal(result._tag, refusedNotice ? "Failure" : "Success");
+        }
         if (timing === "during continuation") {
           const projection = yield* orchestrator.getThreadProjection(threadId);
           const turn = projection.providerTurns[0]!;
@@ -343,14 +358,28 @@ it.effect.each(
           const item = requeued.turnItems.find(
             (item) => item.type === "user_message" && item.messageId === messageId,
           );
-          assert.equal(item?.status, "pending");
-          assert.isNull(item?.startedAt);
-          assert.isNull(item?.completedAt);
+          if (!notificationOnly) {
+            assert.equal(item?.status, "pending");
+            assert.isNull(item?.startedAt);
+            assert.isNull(item?.completedAt);
+          }
         }
-        if (timing === "before dispatch") yield* dispatchSteer;
+        if (timing === "before dispatch") {
+          const result = yield* dispatchSteer.pipe(Effect.result);
+          assert.equal(result._tag, refusedNotice ? "Failure" : "Success");
+        }
         yield* worker.drain();
         yield* orchestrator.resumeQueuedRuns;
         yield* worker.drain();
+        if (notificationOnly) {
+          assert.equal(started.length, 1);
+          assert.equal(steerCalls, refusedNotice ? 0 : 1);
+          const final = yield* orchestrator.getThreadProjection(threadId);
+          assert.isFalse(final.runs.some((run) => run.status === "queued"));
+          if (refusedNotice)
+            assert.isFalse(final.messages.some((message) => message.id === messageId));
+          return;
+        }
         if (timing === "after delivery") {
           assert.equal(steerCalls, 1);
           assert.equal(started.length, 1);
@@ -840,9 +869,27 @@ it.effect(
           assert.deepEqual(changed.runs[0]?.modelSelection, runSelection);
           assert.deepEqual(changed.thread.modelSelection, composerSelection);
 
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("board-notice"),
+            threadId,
+            messageId: MessageId.make("message:board-notice"),
+            text: "board notice",
+            attachments: [],
+            notificationOnly: true,
+            dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
+            createdBy: "agent",
+            creationSource: "server",
+          });
+          yield* worker.drain();
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
+            composerSelection,
+          );
+
           yield* steer("steer-reverted", runSelection);
           const reverted = yield* orchestrator.getThreadProjection(threadId);
-          assert.deepEqual(steered, ["steer-changed", "steer-reverted"]);
+          assert.deepEqual(steered, ["steer-changed", "board notice", "steer-reverted"]);
           assert.lengthOf(reverted.attempts, 1);
           assert.deepEqual(reverted.thread.modelSelection, runSelection);
 
@@ -869,7 +916,12 @@ it.effect(
           });
           yield* steer("steer-back", runSelection);
           const back = yield* orchestrator.getThreadProjection(threadId);
-          assert.deepEqual(steered, ["steer-changed", "steer-reverted", "steer-back"]);
+          assert.deepEqual(steered, [
+            "steer-changed",
+            "board notice",
+            "steer-reverted",
+            "steer-back",
+          ]);
           assert.equal(back.thread.providerInstanceId, instanceId);
           assert.deepEqual(back.thread.modelSelection, runSelection);
         }).pipe(Effect.provide(layer));

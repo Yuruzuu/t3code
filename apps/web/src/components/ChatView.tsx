@@ -3721,10 +3721,18 @@ export default function ChatView(props: ChatViewProps) {
               isServerThread={isServerThread}
               {...(draftId ? { draftId } : {})}
               activeProjectName={activeProject?.title}
-              activeProjectScripts={activeProject ? activeProjectScripts : undefined}
-              preferredScriptId={
-                activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-              }
+              {...(activeProject
+                ? {
+                    projectScripts: {
+                      scripts: activeProjectScripts,
+                      preferredScriptId: lastInvokedScriptByProjectId[activeProject.id] ?? null,
+                      onRun: runProjectScriptStable,
+                      onAdd: saveProjectScriptStable,
+                      onUpdate: updateProjectScriptStable,
+                      onDelete: deleteProjectScriptStable,
+                    },
+                  }
+                : {})}
               keybindings={keybindings}
               availableEditors={availableEditors}
               showOpenInPicker={showOpenInPicker}
@@ -3766,10 +3774,6 @@ export default function ChatView(props: ChatViewProps) {
               {...(isServerThread && isGitRepo
                 ? { onOpenChanges: openChangesFromThreadPanelStable }
                 : {})}
-              onRunProjectScript={runProjectScriptStable}
-              onAddProjectScript={saveProjectScriptStable}
-              onUpdateProjectScript={updateProjectScriptStable}
-              onDeleteProjectScript={deleteProjectScriptStable}
               usage={{
                 providerInstanceId: activeProviderInstanceId,
                 providers: providerStatuses,

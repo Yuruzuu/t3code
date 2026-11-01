@@ -1092,6 +1092,76 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   padding-right: max(env(safe-area-inset-right), 0px);
 }
 
+@utility board-user-message {
+  background-color: light-dark(
+    var(--background),
+    color-mix(in srgb, var(--message-surface), var(--foreground) 14%)
+  );
+}
+
+.board-orb-artwork,
+.board-orb-dots {
+  transform-box: view-box;
+  transform-origin: center;
+  transition:
+    transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 240ms ease;
+}
+
+.board-orb-dots {
+  opacity: 0;
+  transform: scale(0.2) rotate(-180deg);
+}
+
+.board-orb[data-working] .board-orb-artwork {
+  opacity: 0;
+  transform: scale(0.28) rotate(180deg);
+}
+
+.board-orb[data-working] .board-orb-dots {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+}
+
+.board-orb[data-working] .board-orb-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: board-orb-thinking 1.4s ease-in-out infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+}
+
+.board-orb[data-working] .board-orb-dot:nth-child(2) {
+  animation-delay: -0.933333s;
+}
+
+.board-orb[data-working] .board-orb-dot:nth-child(3) {
+  animation-delay: -0.466667s;
+}
+
+@keyframes board-orb-thinking {
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1.06);
+  }
+  50% {
+    opacity: 0.5;
+    transform: translateY(0) scale(0.84);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-orb-artwork,
+  .board-orb-dots {
+    transition: none;
+  }
+
+  .board-orb[data-working] .board-orb-dot {
+    animation: none;
+  }
+}
+
 /* Grain texture for chrome surfaces that float above the body (see the
    --surface-grain note). Layered over the element's background-color, so it
    composes with bg-* utilities. */

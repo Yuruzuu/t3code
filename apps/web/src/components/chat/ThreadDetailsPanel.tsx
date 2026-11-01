@@ -16,10 +16,11 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { memo, useState, type ComponentProps } from "react";
+import { memo, useState, type ComponentProps, type ReactNode } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { ThreadBoardsPanel } from "./ThreadBoardsPanel";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
@@ -50,8 +51,9 @@ interface ThreadDetailsPanelProps extends Pick<
   isServerThread: boolean;
   draftId?: DraftId;
   activeProjectName: string | undefined;
-  activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
-  preferredScriptId: string | null;
+  relatedContent?: ReactNode;
+  /** Omit where scripts cannot run, such as outside the thread terminal. */
+  projectScripts?: ProjectScriptsPanelProps;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   showOpenInPicker: boolean;
@@ -72,14 +74,16 @@ interface ThreadDetailsPanelProps extends Pick<
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
-  onRunProjectScript: (script: ProjectScript) => void;
-  onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
-  onUpdateProjectScript: (
-    scriptId: string,
-    input: NewProjectScriptInput,
-  ) => Promise<ProjectScriptActionResult>;
-  onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
-  usage: ThreadDetailsUsageInput;
+  usage?: ThreadDetailsUsageInput;
+}
+
+export interface ProjectScriptsPanelProps {
+  scripts: ReadonlyArray<ProjectScript>;
+  preferredScriptId: string | null;
+  onRun: (script: ProjectScript) => void;
+  onAdd: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onUpdate: (scriptId: string, input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onDelete: (scriptId: string) => Promise<ProjectScriptActionResult>;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -87,7 +91,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
-    props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
+    props.projectScripts && visible.scripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const branchToolbarProps = {
@@ -148,7 +152,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         const show = {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
-          scripts: visible.scripts && props.activeProjectScripts !== undefined,
+          scripts: visible.scripts && props.projectScripts !== undefined,
           branch: props.gitCwd !== null && props.isGitRepo && visible.branch,
           git:
             props.gitCwd !== null &&
@@ -191,17 +195,17 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       />
                     ) : null}
 
-                    {show.scripts && props.activeProjectScripts ? (
+                    {show.scripts && props.projectScripts ? (
                       <ProjectScriptsControl
                         environmentId={props.environmentId}
                         displayMode="panel"
-                        scripts={props.activeProjectScripts}
+                        scripts={props.projectScripts.scripts}
                         fileScripts={fileScripts}
-                        preferredScriptId={props.preferredScriptId}
-                        onRunScript={props.onRunProjectScript}
-                        onAddScript={props.onAddProjectScript}
-                        onUpdateScript={props.onUpdateProjectScript}
-                        onDeleteScript={props.onDeleteProjectScript}
+                        preferredScriptId={props.projectScripts.preferredScriptId}
+                        onRunScript={props.projectScripts.onRun}
+                        onAddScript={props.projectScripts.onAdd}
+                        onUpdateScript={props.projectScripts.onUpdate}
+                        onDeleteScript={props.projectScripts.onDelete}
                       />
                     ) : null}
                   </div>
@@ -245,6 +249,15 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
+              {density === "full" && !props.draftId
+                ? (props.relatedContent ?? (
+                    <ThreadBoardsPanel
+                      environmentId={props.environmentId}
+                      threadId={props.threadId}
+                    />
+                  ))
+                : null}
+
               {density === "full" && !props.draftId && visible.lineage ? (
                 <ThreadRelationshipsPanel
                   environmentId={props.environmentId}
@@ -252,7 +265,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+              {visible.usage && props.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
 
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}
               <div className="p-2 group-has-[>section>:last-child:not(:empty)]/details-items:hidden">

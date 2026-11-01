@@ -42,6 +42,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.messageBoardListChannels]: AuthOrchestrationReadScope,
   [WS_METHODS.messageBoardListThreads]: AuthOrchestrationReadScope,
   [WS_METHODS.messageBoardReadThread]: AuthOrchestrationReadScope,
+  [WS_METHODS.messageBoardListAgentThreads]: AuthOrchestrationReadScope,
   [WS_METHODS.messageBoardSubscribeEvents]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,

@@ -1,4 +1,5 @@
 import type {
+  BoardHandlingSnapshot,
   BoardAuthor,
   BoardChannel,
   BoardEvent,
@@ -7,6 +8,7 @@ import type {
   BoardThreadSort,
   BoardThreadSummary,
   MessageBoardListThreadsResult,
+  MessageBoardTodosResult,
 } from "@t3tools/contracts";
 
 export interface BoardThreadPage {
@@ -16,6 +18,8 @@ export interface BoardThreadPage {
 }
 
 export interface BoardCache {
+  handling: Readonly<Record<string, BoardHandlingSnapshot>>;
+  todos: Readonly<Record<string, MessageBoardTodosResult>>;
   channels: readonly BoardChannel[] | null;
   pages: Readonly<Record<string, BoardThreadPage>>;
   details: Readonly<Record<string, BoardThreadDetail>>;
@@ -25,6 +29,8 @@ export interface BoardCache {
 }
 
 export const emptyBoardCache: BoardCache = {
+  handling: {},
+  todos: {},
   channels: null,
   pages: {},
   details: {},
@@ -40,12 +46,23 @@ function readAt(cache: BoardCache, channelName: string, rootId: string) {
   return thread > channel ? thread : channel;
 }
 
+/** New posts from others in a loaded discussion; only its latest page is known to the client. */
+export function boardThreadUnreadCount(cache: BoardCache, rootId: string) {
+  const detail = cache.details[rootId];
+  if (!detail?.summary.unread) return 0;
+  const marker = readAt(cache, detail.summary.root.channelName, rootId);
+  const own = detail.summary.readAt ?? "";
+  const since = marker > own ? marker : own;
+  return detail.posts.filter((post) => post.author.kind !== "user" && post.createdAt > since)
+    .length;
+}
+
 export const boardPageKey = (channelName: string, sort: BoardThreadSort) =>
   JSON.stringify([channelName, sort]);
 
 function sameAuthor(left: BoardAuthor, right: BoardAuthor) {
-  return left.kind === "user"
-    ? right.kind === "user"
+  return left.kind !== "agent"
+    ? right.kind === left.kind
     : right.kind === "agent" && left.threadId === right.threadId;
 }
 
@@ -77,6 +94,7 @@ function applyPost(
       post.createdAt > summary.lastActivityAt ? post.createdAt : summary.lastActivityAt,
     participants:
       summary.participants.length >= 8 ||
+      post.author.kind === "system" ||
       summary.participants.some((author) => sameAuthor(author, post.author))
         ? summary.participants
         : [...summary.participants, post.author],
@@ -172,9 +190,30 @@ export function mergeBoardThreadPage(
   };
 }
 
-export function mergeBoardDetail(cache: BoardCache, detail: BoardThreadDetail): BoardCache {
+export function mergeBoardDetail(
+  cache: BoardCache,
+  detail: BoardThreadDetail,
+  input: { cursor?: string } = {},
+): BoardCache {
   const rootId = detail.summary.root.id;
   const previous = cache.details[rootId];
+  const olderPostsCursor =
+    previous !== undefined &&
+    (input.cursor === undefined
+      ? previous.olderPostsCursor !== undefined
+      : previous.olderPostsCursor !== input.cursor)
+      ? previous.olderPostsCursor
+      : detail.olderPostsCursor;
+  const liveHandling = cache.handling[rootId] ?? previous?.handling;
+  const handling =
+    liveHandling !== undefined && liveHandling.revision >= (detail.handling?.revision ?? -1)
+      ? liveHandling
+      : detail.handling;
+  const liveTodos = cache.todos[rootId] ?? previous;
+  const todoSnapshot =
+    (liveTodos?.todosRevision ?? -1) >= (detail.todosRevision ?? -1) || detail.todos === undefined
+      ? liveTodos
+      : detail;
   const latest =
     previous !== undefined &&
     (previous.summary.lastActivityAt > detail.summary.lastActivityAt ||
@@ -183,10 +222,25 @@ export function mergeBoardDetail(cache: BoardCache, detail: BoardThreadDetail): 
       : detail.summary;
   return {
     ...cache,
+    ...(handling === undefined ? {} : { handling: { ...cache.handling, [rootId]: handling } }),
+    ...(todoSnapshot?.todos === undefined || todoSnapshot.todosRevision === undefined
+      ? {}
+      : {
+          todos: {
+            ...cache.todos,
+            [rootId]: { todos: todoSnapshot.todos, todosRevision: todoSnapshot.todosRevision },
+          },
+        }),
     recentPostIds: rememberPosts(cache, detail.posts),
     details: {
       ...cache.details,
       [rootId]: {
+        ...(olderPostsCursor === undefined ? {} : { olderPostsCursor }),
+        ...(handling === undefined ? {} : { handling }),
+        ...(todoSnapshot?.todos === undefined ? {} : { todos: todoSnapshot.todos }),
+        ...(todoSnapshot?.todosRevision === undefined
+          ? {}
+          : { todosRevision: todoSnapshot.todosRevision }),
         members: [
           ...detail.members.map((member) => {
             const live = previous?.members.find((item) => sameAuthor(item.author, member.author));
@@ -215,6 +269,43 @@ export function mergeBoardDetail(cache: BoardCache, detail: BoardThreadDetail): 
 }
 
 export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCache {
+  if (event.type === "handling-changed") {
+    const snapshot = event.handling;
+    if ((cache.handling[snapshot.rootId]?.revision ?? -1) >= snapshot.revision) return cache;
+    const detail = cache.details[snapshot.rootId];
+    return {
+      ...cache,
+      handling: { ...cache.handling, [snapshot.rootId]: snapshot },
+      details:
+        detail === undefined
+          ? cache.details
+          : { ...cache.details, [snapshot.rootId]: { ...detail, handling: snapshot } },
+    };
+  }
+
+  if (event.type === "todos-changed") {
+    const detail = cache.details[event.rootId];
+    if (
+      (cache.todos[event.rootId]?.todosRevision ?? detail?.todosRevision ?? -1) >=
+      event.todosRevision
+    )
+      return cache;
+    return {
+      ...cache,
+      todos: {
+        ...cache.todos,
+        [event.rootId]: { todos: event.todos, todosRevision: event.todosRevision },
+      },
+      details:
+        detail === undefined
+          ? cache.details
+          : {
+              ...cache.details,
+              [event.rootId]: { ...detail, todos: event.todos, todosRevision: event.todosRevision },
+            },
+    };
+  }
+
   if (event.type === "channel-upserted") {
     const channels = cache.channels ?? [];
     const incoming =
@@ -232,12 +323,20 @@ export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCach
 
   if (event.type === "read-marker-updated") {
     const { rootId } = event;
-    const readSummary = (summary: BoardThreadSummary) =>
+    const shouldRead = (summary: BoardThreadSummary) =>
       summary.unread &&
       summary.lastActivityAt <= event.readAt &&
-      (rootId === undefined || summary.root.id === rootId)
-        ? { ...summary, unread: false }
-        : summary;
+      (rootId === undefined || summary.root.id === rootId);
+    const readSummary = (summary: BoardThreadSummary) =>
+      shouldRead(summary) ? { ...summary, unread: false } : summary;
+    const readPage = (page: BoardThreadPage) =>
+      page.channelName === event.channelName && page.result.threads.some(shouldRead)
+        ? { ...page, result: { ...page.result, threads: page.result.threads.map(readSummary) } }
+        : page;
+    const readDetail = (detail: BoardThreadDetail) =>
+      detail.summary.root.channelName === event.channelName && shouldRead(detail.summary)
+        ? { ...detail, summary: readSummary(detail.summary) }
+        : detail;
     if (rootId !== undefined) {
       if ((cache.threadReadMarkers[rootId] ?? "") > event.readAt) return cache;
       const detail = cache.details[rootId];
@@ -246,50 +345,72 @@ export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCach
         ...cache,
         threadReadMarkers: { ...cache.threadReadMarkers, [rootId]: event.readAt },
         pages: Object.fromEntries(
-          Object.entries(cache.pages).map(([key, page]) => [
-            key,
-            page.channelName === event.channelName
-              ? {
-                  ...page,
-                  result: { ...page.result, threads: page.result.threads.map(readSummary) },
-                }
-              : page,
-          ]),
+          Object.entries(cache.pages).map(([key, page]) => [key, readPage(page)]),
         ),
         details:
-          detail === undefined
-            ? cache.details
-            : { ...cache.details, [rootId]: { ...detail, summary: readSummary(detail.summary) } },
+          detail === undefined ? cache.details : { ...cache.details, [rootId]: readDetail(detail) },
       };
     }
     if ((cache.readMarkers[event.channelName] ?? "") > event.readAt) return cache;
+    const unreadChannel = cache.channels?.find(
+      (channel) =>
+        channel.name === event.channelName &&
+        channel.lastActivityAt <= event.readAt &&
+        channel.unreadCount > 0,
+    );
     return {
       ...cache,
       readMarkers: { ...cache.readMarkers, [event.channelName]: event.readAt },
-      channels:
-        cache.channels?.map((channel) =>
-          channel.name === event.channelName &&
-          channel.lastActivityAt <= event.readAt &&
-          channel.unreadCount > 0
-            ? { ...channel, unreadCount: 0 }
-            : channel,
-        ) ?? null,
+      channels: unreadChannel
+        ? cache.channels!.map((channel) =>
+            channel === unreadChannel ? { ...channel, unreadCount: 0 } : channel,
+          )
+        : cache.channels,
       pages: Object.fromEntries(
-        Object.entries(cache.pages).map(([key, page]) => [
-          key,
-          page.channelName === event.channelName
-            ? { ...page, result: { ...page.result, threads: page.result.threads.map(readSummary) } }
-            : page,
-        ]),
+        Object.entries(cache.pages).map(([key, page]) => [key, readPage(page)]),
       ),
       details: Object.fromEntries(
-        Object.entries(cache.details).map(([key, detail]) => [
-          key,
-          detail.summary.root.channelName === event.channelName
-            ? { ...detail, summary: readSummary(detail.summary) }
-            : detail,
-        ]),
+        Object.entries(cache.details).map(([key, detail]) => [key, readDetail(detail)]),
       ),
+    };
+  }
+
+  if (event.type === "reactions-changed") {
+    const detail = cache.details[event.rootId];
+    if (detail === undefined) return cache;
+    return {
+      ...cache,
+      details: {
+        ...cache.details,
+        [event.rootId]: {
+          ...detail,
+          posts: detail.posts.map((post) => {
+            if (post.id !== event.postId) return post;
+            const { reactions: _previous, ...rest } = post;
+            return event.reactions.length === 0 ? rest : { ...rest, reactions: event.reactions };
+          }),
+        },
+      },
+    };
+  }
+
+  if (event.type === "member-updated") {
+    const detail = cache.details[event.rootId];
+    if (detail === undefined) return cache;
+    const exists = detail.members.some((member) => sameAuthor(member.author, event.member.author));
+    return {
+      ...cache,
+      details: {
+        ...cache.details,
+        [event.rootId]: {
+          ...detail,
+          members: exists
+            ? detail.members.map((member) =>
+                sameAuthor(member.author, event.member.author) ? event.member : member,
+              )
+            : [...detail.members, event.member],
+        },
+      },
     };
   }
 
@@ -323,6 +444,7 @@ export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCach
         : {
             ...cache.details,
             [post.rootId]: {
+              ...detail,
               members:
                 post.author.kind !== "agent"
                   ? detail.members

@@ -29,6 +29,17 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("does not expose agent todo mutations through the user RPC API", () => {
+    for (const method of [
+      "messageBoard.createTodo",
+      "messageBoard.updateTodo",
+      "messageBoard.deleteTodo",
+    ]) {
+      expect(() => requiredScopeForRpcMethod(method)).toThrow(
+        "has no declared authorization scope",
+      );
+    }
+  });
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

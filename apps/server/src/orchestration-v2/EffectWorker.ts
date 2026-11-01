@@ -1,3 +1,7 @@
+import * as Crypto from "effect/Crypto";
+import * as MessageBoardHandlingEvents from "../messageBoard/MessageBoardHandlingEvents.ts";
+import * as MessageBoardDispatchService from "../messageBoard/MessageBoardDispatchService.ts";
+import * as SqlClient from "effect/sql/SqlClient";
 import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -27,6 +31,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -71,6 +76,11 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
 export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
+  | MessageBoardHandlingEvents.MessageBoardHandlingEvents
+  | Crypto.Crypto
+  | SqlClient.SqlClient
+  | ProjectionStore.ProjectionStoreV2
+  | EffectOutbox.EffectOutboxV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunFinalizationService.RunFinalizationService
   | CheckpointRollbackService.CheckpointRollbackServiceV2
@@ -93,6 +103,11 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const boardSql = yield* SqlClient.SqlClient;
+    const boardProjections = yield* ProjectionStore.ProjectionStoreV2;
+    const boardOutbox = yield* EffectOutbox.EffectOutboxV2;
+    const crypto = yield* Crypto.Crypto;
+    const boardEvents = yield* MessageBoardHandlingEvents.MessageBoardHandlingEvents;
     const settings = yield* ServerSettings.ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
@@ -138,6 +153,34 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "board-dispatch":
+            return MessageBoardDispatchService.make.pipe(
+              Effect.provideService(SqlClient.SqlClient, boardSql),
+              Effect.provideService(ProjectionStore.ProjectionStoreV2, boardProjections),
+              Effect.provideService(EffectOutbox.EffectOutboxV2, boardOutbox),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(
+                MessageBoardHandlingEvents.MessageBoardHandlingEvents,
+                boardEvents,
+              ),
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+              Effect.flatMap((service) =>
+                effect.request.type === "board-dispatch"
+                  ? service.dispatchPending({
+                      rootId: effect.request.rootId,
+                      recipientThreadId: effect.request.recipientThreadId,
+                    })
+                  : Effect.void,
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-turn.start":
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
@@ -254,6 +297,7 @@ export const layerExecutor: Layer.Layer<
                     ) {
                       return yield* error;
                     }
+                    if (effect.request.notificationOnly === true) return;
                     const projection = yield* threads.getThreadRecords(
                       effect.threadId,
                       ["messages", "runs"],

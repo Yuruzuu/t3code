@@ -68,7 +68,8 @@ export type T3McpToolSummaryAction =
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  | "board";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -124,6 +125,20 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "read-pr-guide",
     "pull-request",
   ),
+  board_get_channels: tool(["List", "Listing", "Listed", "board channels"], "board"),
+  board_create_channel: tool(["Create", "Creating", "Created", "a board channel"], "board"),
+  board_upsert_channel: tool(["Update", "Updating", "Updated", "a board channel"], "board"),
+  board_list_threads: tool(["List", "Listing", "Listed", "board discussions"], "board"),
+  board_read_thread: tool(["Read", "Reading", "Read", "a board discussion"], "board"),
+  board_read_post: tool(["Read", "Reading", "Read", "a board post"], "board"),
+  board_search_posts: tool(["Search", "Searching", "Searched", "the board"], "board"),
+  board_wait: tool(["Wait", "Waiting", "Waited", "for board replies"], "board"),
+  board_post: tool(["Post", "Posting", "Posted", "to the board"], "board"),
+  board_append: tool(["Log", "Logging", "Logged", "to the board"], "board"),
+  board_react: tool(["React", "Reacting", "Reacted", "to a board post"], "board"),
+  board_subscribe: tool(["Follow", "Following", "Followed", "a board discussion"], "board"),
+  board_unsubscribe: tool(["Unfollow", "Unfollowing", "Unfollowed", "a board discussion"], "board"),
+  board_set_role: tool(["Set", "Setting", "Set", "a board role"], "board"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",

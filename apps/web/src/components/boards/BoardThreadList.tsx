@@ -1,4 +1,4 @@
-import type { BoardAuthor, BoardThreadSummary } from "@t3tools/contracts";
+import type { BoardThreadSummary } from "@t3tools/contracts";
 import { HashIcon } from "lucide-react";
 import { memo, useState } from "react";
 
@@ -11,37 +11,33 @@ import {
   BoardEmptyState,
   BoardLoading,
   BoardTimestamp,
-  BoardWorkingIndicator,
   boardAuthorName,
-  boardAuthorRole,
+  BoardAuthorLabel,
   boardPostExcerpt,
-  boardPostTitle,
 } from "./BoardPrimitives";
+import { boardMainPostContent } from "./boardDiscussion";
 import type { BoardsViewModel } from "./boardsViewModel";
 
-const NO_ONE_WORKING: readonly BoardAuthor[] = [];
-
-/** Title, one plain preview of the latest activity, and a single line of details. */
+/** Fixed three lines (title, latest preview, details) so live updates never move other rows. */
 const BoardThreadRow = memo(function BoardThreadRow({
   thread,
-  working,
   onSelect,
 }: {
   thread: BoardThreadSummary;
-  working: readonly BoardAuthor[];
   onSelect: BoardsViewModel["onSelectThread"];
 }) {
   const { root, latestReply } = thread;
+  const { title, description } = boardMainPostContent(root);
   const preview = latestReply
     ? boardPostExcerpt(latestReply.text, { includeFirstLine: true })
-    : boardPostExcerpt(root.text);
+    : boardPostExcerpt(description, { includeFirstLine: true });
 
   return (
     <li>
       <button
         type="button"
         onClick={() => onSelect(root.id)}
-        className="group relative flex w-full gap-3.5 px-5 py-4 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="group relative flex h-22 w-full items-center gap-3.5 px-5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         {thread.unread && (
           <span
@@ -58,29 +54,24 @@ const BoardThreadRow = memo(function BoardThreadRow({
                 thread.unread ? "font-semibold text-foreground" : "font-medium text-foreground/90",
               )}
             >
-              {boardPostTitle(root.text)}
+              {title}
             </h3>
             <span className="shrink-0 text-2xs text-muted-foreground tabular-nums">
               <BoardTimestamp value={thread.lastActivityAt} />
             </span>
           </div>
-          {preview && (
-            <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
-              {latestReply && (
-                <span className="font-medium text-foreground/80">
-                  {boardAuthorName(latestReply.author)}:{" "}
-                </span>
-              )}
-              {preview}
-            </p>
-          )}
-          <p className="mt-1.5 truncate text-xs text-muted-foreground/80 tabular-nums">
-            Started by {boardAuthorName(root.author)}
-            {root.author.kind === "agent" && ` (${boardAuthorRole(root.author)})`}
-            {" · "}
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">
+            {latestReply && (
+              <span className="font-medium text-foreground/90">
+                <BoardAuthorLabel author={latestReply.author} />:{" "}
+              </span>
+            )}
+            {preview || "\u00a0"}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">
+            <span className="sr-only">Started by {boardAuthorName(root.author)} · </span>
             {thread.replyCount} {thread.replyCount === 1 ? "reply" : "replies"}
           </p>
-          <BoardWorkingIndicator authors={working} className="mt-2" />
         </div>
       </button>
     </li>
@@ -142,7 +133,13 @@ export function BoardThreadList({
       </div>
 
       {model.threads === null ? (
-        <BoardLoading label="Loading discussions" />
+        model.isConnected ? (
+          <BoardLoading label="Loading discussions" />
+        ) : (
+          <BoardEmptyState title="You're offline">
+            Discussions load when the connection comes back.
+          </BoardEmptyState>
+        )
       ) : model.threads.length === 0 ? (
         <BoardEmptyState title="No discussions in this channel">
           When an agent posts to <code>#{channelName}</code>, it shows up here.
@@ -153,12 +150,7 @@ export function BoardThreadList({
           className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card/30"
         >
           {model.threads.map((thread) => (
-            <BoardThreadRow
-              key={thread.root.id}
-              thread={thread}
-              working={model.workingByRoot.get(thread.root.id) ?? NO_ONE_WORKING}
-              onSelect={selectThread}
-            />
+            <BoardThreadRow key={thread.root.id} thread={thread} onSelect={selectThread} />
           ))}
         </ul>
       )}

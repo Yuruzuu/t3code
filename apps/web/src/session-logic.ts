@@ -26,7 +26,12 @@ import {
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
-import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  boardDiscussionFromToolItem,
+  htmlRenderFromToolItem,
+  mcpAppFromToolItem,
+  type BoardDiscussionReference,
+} from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
   workEntryIndicatesToolFailure,
@@ -132,6 +137,13 @@ export type TimelineEntry = (
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly htmlRender: HtmlRenderReference;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "board-discussion";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly boardDiscussion: BoardDiscussionReference;
     }
   | {
       readonly id: string;
@@ -706,6 +718,22 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         runId: item.runId,
         htmlRender,
+        ...attemptMetadata,
+      });
+      continue;
+    }
+
+    const boardDiscussion =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? boardDiscussionFromToolItem(item)
+        : undefined;
+    if (boardDiscussion !== undefined) {
+      entries.push({
+        id: item.id,
+        kind: "board-discussion",
+        createdAt,
+        runId: item.runId,
+        boardDiscussion,
         ...attemptMetadata,
       });
       continue;

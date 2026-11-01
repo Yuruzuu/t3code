@@ -83,6 +83,22 @@ import Migration0074 from "./Migrations/074_MessageBoardRoles.ts";
 
 import Migration0075 from "./Migrations/075_MessageBoardThreadReads.ts";
 
+import Migration0076 from "./Migrations/076_MessageBoardSubscriptionOptOut.ts";
+
+import Migration0077 from "./Migrations/077_MessageBoardRepliesReactions.ts";
+
+import Migration0078 from "./Migrations/078_MessageBoardPostWorkedMs.ts";
+
+import Migration0079 from "./Migrations/079_MessageBoardPostRunId.ts";
+
+import Migration0080 from "./Migrations/080_MessageBoardTodos.ts";
+import Migration0081 from "./Migrations/081_MessageBoardDeliveryAndRequests.ts";
+
+import Migration0082 from "./Migrations/082_MessageBoardHandling.ts";
+
+import Migration0083 from "./Migrations/083_MessageBoardTodoActions.ts";
+import Migration0084 from "./Migrations/084_MessageBoardResponderSelection.ts";
+
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -160,6 +176,15 @@ const migrationEntries = [
   [73, "MessageBoard", Migration0073],
   [74, "MessageBoardRoles", Migration0074],
   [75, "MessageBoardThreadReads", Migration0075],
+  [76, "MessageBoardSubscriptionOptOut", Migration0076],
+  [77, "MessageBoardRepliesReactions", Migration0077],
+  [78, "MessageBoardPostWorkedMs", Migration0078],
+  [79, "MessageBoardPostRunId", Migration0079],
+  [80, "MessageBoardTodos", Migration0080],
+  [81, "MessageBoardDeliveryAndRequests", Migration0081],
+  [82, "MessageBoardHandling", Migration0082],
+  [83, "MessageBoardTodoActions", Migration0083],
+  [84, "MessageBoardResponderSelection", Migration0084],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

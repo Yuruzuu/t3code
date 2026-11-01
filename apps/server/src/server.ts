@@ -35,6 +35,10 @@ import {
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as MessageBoardService from "./messageBoard/MessageBoardService.ts";
+import * as OpenAIDecisionsClient from "./messageBoard/OpenAIDecisionsClient.ts";
+import * as MessageBoardResponderSelection from "./messageBoard/MessageBoardResponderSelection.ts";
+import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
+import * as MessageBoardHandlingEvents from "./messageBoard/MessageBoardHandlingEvents.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
@@ -627,6 +631,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
+  Layer.provideMerge(MessageBoardHandlingEvents.layer),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
@@ -746,8 +751,24 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  Layer.effectDiscard(
+    MessageBoardResponderSelection.MessageBoardResponderSelection.pipe(
+      Effect.flatMap((selection) => selection.recover()),
+    ),
+  ),
 ).pipe(
-  Layer.provide(MessageBoardService.layer),
+  Layer.provide(
+    MessageBoardService.layer.pipe(
+      Layer.provide(
+        OpenAIDecisionsClient.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSecretStore.layer),
+        ),
+      ),
+      Layer.provide(EffectOutbox.layer),
+      Layer.provide(MessageBoardHandlingEvents.layer),
+    ),
+  ),
   Layer.provide(ProjectionStoreV2.layer),
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),

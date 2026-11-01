@@ -1004,6 +1004,58 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps a board discussion an agent started visible when its turn folds", () => {
+    const message = (id: string, role: "user" | "assistant", at: string, runId: string | null) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt: at,
+      message: {
+        id: id as never,
+        role,
+        text: id,
+        runId: runId as never,
+        createdAt: at,
+        updatedAt: at,
+        streaming: false,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        message("user", "user", "2026-01-01T00:00:00Z", null),
+        {
+          id: "work-entry",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work",
+            createdAt: "2026-01-01T00:00:05Z",
+            runId: "turn-1" as never,
+            label: "Ran command",
+            tone: "tool" as const,
+          },
+        },
+        {
+          id: "board-entry",
+          kind: "board-discussion" as const,
+          createdAt: "2026-01-01T00:00:08Z",
+          runId: "turn-1" as never,
+          boardDiscussion: { rootId: "root-1", channelName: "general", title: "Plan" },
+        },
+        message("assistant", "assistant", "2026-01-01T00:00:20Z", "turn-1"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "board-entry",
+      "assistant-entry",
+    ]);
+  });
+
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
     const runId = RunId.make("turn-1");
     const timelineEntries = [

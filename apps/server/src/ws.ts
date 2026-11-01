@@ -1905,9 +1905,28 @@ export const layerWsRpc = (
                   : new MessageBoardError({ code: "storage", message: error.message }),
               ),
             ),
-        [WS_METHODS.messageBoardPost]: (input) =>
+        [WS_METHODS.messageBoardListAgentThreads]: (input) =>
           messageBoard
-            .post({ ...input, author: { kind: "user" } })
+            .listAgentThreads({ ...input, viewer: { kind: "user" } })
+            .pipe(
+              Effect.mapError((error) =>
+                isMessageBoardError(error)
+                  ? error
+                  : new MessageBoardError({ code: "storage", message: error.message }),
+              ),
+            ),
+        [WS_METHODS.messageBoardPost]: (input) =>
+          messageBoard.postAndNotify({ ...input, author: { kind: "user" } }).pipe(
+            Effect.map(({ post, notifiedThreads }) => ({ post, notifiedThreads })),
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({ code: "storage", message: error.message }),
+            ),
+          ),
+        [WS_METHODS.messageBoardReact]: (input) =>
+          messageBoard
+            .react({ ...input, viewer: { kind: "user" } })
             .pipe(
               Effect.mapError((error) =>
                 isMessageBoardError(error)
@@ -1925,7 +1944,93 @@ export const layerWsRpc = (
                   : new MessageBoardError({ code: "storage", message: error.message }),
               ),
             ),
-        [WS_METHODS.messageBoardSubscribeEvents]: () => messageBoard.events,
+        [WS_METHODS.messageBoardAssignLead]: (input) =>
+          messageBoard.assignLead({ ...input, viewer: { kind: "user" } }).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({
+                    code: "storage",
+                    message: "Unable to update discussion handling.",
+                  }),
+            ),
+          ),
+        [WS_METHODS.messageBoardUpdateContext]: (input) =>
+          messageBoard.updateContext({ ...input, viewer: { kind: "user" } }).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({
+                    code: "storage",
+                    message: "Unable to update discussion handling.",
+                  }),
+            ),
+          ),
+        [WS_METHODS.messageBoardReassignRequest]: (input) =>
+          messageBoard.reassignRequest({ ...input, viewer: { kind: "user" } }).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({
+                    code: "storage",
+                    message: "Unable to update discussion handling.",
+                  }),
+            ),
+          ),
+        [WS_METHODS.messageBoardResumeRequest]: (input) =>
+          messageBoard.resumeRequest({ ...input, viewer: { kind: "user" } }).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({
+                    code: "storage",
+                    message: "Unable to update discussion handling.",
+                  }),
+            ),
+          ),
+        [WS_METHODS.messageBoardReportOutcome]: (input) =>
+          messageBoard.reportOutcome({ ...input, viewer: { kind: "user" } }).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({
+                    code: "storage",
+                    message: "Unable to update discussion handling.",
+                  }),
+            ),
+          ),
+        [WS_METHODS.messageBoardCloseDiscussion]: (input) =>
+          messageBoard.closeDiscussion({ ...input, viewer: { kind: "user" } }).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({
+                    code: "storage",
+                    message: "Unable to update discussion handling.",
+                  }),
+            ),
+          ),
+        [WS_METHODS.messageBoardReopenDiscussion]: (input) =>
+          messageBoard.reopenDiscussion({ ...input, viewer: { kind: "user" } }).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({
+                    code: "storage",
+                    message: "Unable to update discussion handling.",
+                  }),
+            ),
+          ),
+        [WS_METHODS.messageBoardSubscribeEvents]: (input) =>
+          messageBoard.events.pipe(
+            Stream.filter((event) => event.type !== "handling-changed" || input.handling === true),
+            Stream.filter(
+              (event) =>
+                event.type !== "post-created" ||
+                event.post.author.kind !== "system" ||
+                input.responderSelections === true,
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

@@ -48,6 +48,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
+  type ReactNode,
 } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 
@@ -147,6 +148,7 @@ export interface ComposerPromptEditorProps {
   richTextEnabled?: boolean;
   literalText?: boolean;
   contextRecords: ComposerDraftContextRecords;
+  renderMention?: (path: string) => ReactNode;
   buildContextClipboardFragment?:
     | ((contextIds: ReadonlyArray<string>) => string | null)
     | undefined;
@@ -211,6 +213,8 @@ const ComposerCitationCommentContext = createContext<{
 });
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
+const ComposerMentionRendererContext =
+  createContext<ComposerPromptEditorProps["renderMention"]>(undefined);
 
 const SURROUND_CLOSE: Record<string, string> = {
   "(": ")",
@@ -258,7 +262,22 @@ const ComposerMentionExtension = Node.create({
 
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
+  const renderMention = use(ComposerMentionRendererContext);
   const path = (node.attrs.path as string) ?? "";
+  const customChip = renderMention?.(path);
+  if (customChip != null) {
+    return (
+      <NodeViewWrapper
+        as="span"
+        className={CHIP_NODE_SELECTION_CLASS_NAME}
+        contentEditable={false}
+        spellCheck={false}
+        data-composer-mention-chip="true"
+      >
+        {customChip}
+      </NodeViewWrapper>
+    );
+  }
   const chip = (
     <ContextChip
       kind={documentChipKindForFileName(path) ?? "mention"}
@@ -782,17 +801,19 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   // Changing text mode remounts the editor. Its collapsed cursor cannot represent
   // a caret inside unknown `$name` text, so retain the exact Markdown offset here.
   return (
-    <ComposerPromptEditorTiptapInner
-      key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}`}
-      {...props}
-      restoreFocusRef={restoreFocusRef}
-      initialExpandedCursor={
-        selection?.value === props.value && selection.cursor === props.cursor
-          ? selection.expandedCursor
-          : expandCollapsedComposerCursor(props.value, props.cursor, props.literalText)
-      }
-      onChange={onChange}
-    />
+    <ComposerMentionRendererContext value={props.renderMention}>
+      <ComposerPromptEditorTiptapInner
+        key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}`}
+        {...props}
+        restoreFocusRef={restoreFocusRef}
+        initialExpandedCursor={
+          selection?.value === props.value && selection.cursor === props.cursor
+            ? selection.expandedCursor
+            : expandCollapsedComposerCursor(props.value, props.cursor, props.literalText)
+        }
+        onChange={onChange}
+      />
+    </ComposerMentionRendererContext>
   );
 }
 

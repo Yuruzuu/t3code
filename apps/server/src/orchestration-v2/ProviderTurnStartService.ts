@@ -1,3 +1,11 @@
+import * as MessageBoardHandlingEvents from "../messageBoard/MessageBoardHandlingEvents.ts";
+import * as MessageBoardHandlingStore from "../messageBoard/MessageBoardHandlingStore.ts";
+import * as MessageBoardResponderSelection from "../messageBoard/MessageBoardResponderSelection.ts";
+import * as MessageBoardSelectionStore from "../messageBoard/MessageBoardSelectionStore.ts";
+import { isBoardHandlingStopped, withBoardHandlingLock } from "./BoardHandlingGuard.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Crypto from "effect/Crypto";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -33,6 +41,7 @@ import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
@@ -126,6 +135,10 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | MessageBoardHandlingEvents.MessageBoardHandlingEvents
+  | SqlClient.SqlClient
+  | Crypto.Crypto
+  | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -143,6 +156,11 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const boardSql = yield* SqlClient.SqlClient;
+    const boardHandling = yield* MessageBoardHandlingStore.make;
+    const boardSelections = yield* MessageBoardSelectionStore.make;
+    const boardResponderSelection = yield* MessageBoardResponderSelection.makeExecutionGuard;
+    const threadCommandExecutor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -193,6 +211,7 @@ export const layer: Layer.Layer<
       readonly attemptId: OrchestrationV2RunAttempt["id"];
       readonly providerThreadId: OrchestrationV2ProviderThread["id"];
       readonly runOrdinal: number;
+      readonly boardBatchId?: string;
       readonly inheritedBackgroundTurnItems: ReturnType<
         typeof RunExecutionService.selectInheritedBackgroundTurnItems
       >;
@@ -219,7 +238,39 @@ export const layer: Layer.Layer<
             ),
             Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
           ),
-        shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
+        shouldStartProviderTurn: Effect.fn("ProviderTurnStartService.shouldStartProviderTurn")(
+          function* () {
+            if (!(yield* isCurrentAttemptInStatus("running"))) return false;
+            if (input.boardBatchId === undefined) return true;
+            if (boardHandling === undefined) return false;
+            const batch = { batchId: input.boardBatchId, threadId: input.threadId };
+            return yield* Effect.gen(function* () {
+              if (!(yield* boardResponderSelection.reselectBeforeStart(batch))) return false;
+              if (!(yield* boardHandling.validateBatch(batch))) return false;
+              const resumeStopReceipt = yield* boardHandling.resumeStopReceipt(batch);
+              if (
+                yield* isBoardHandlingStopped({
+                  threadId: input.threadId,
+                  runId: input.runId,
+                  resumeStopReceipt,
+                }).pipe(
+                  Effect.provideService(ProjectionStore.ProjectionStoreV2, projectionStore),
+                  Effect.provideService(SqlClient.SqlClient, boardSql),
+                )
+              ) {
+                yield* boardHandling.holdBatch(batch);
+                return false;
+              }
+              return true;
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Board provider admission could not be verified", { cause }).pipe(
+                  Effect.as(false),
+                ),
+              ),
+            );
+          },
+        ),
         shouldFinalizeRun: () =>
           projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
             Effect.map((current) => {
@@ -315,7 +366,7 @@ export const layer: Layer.Layer<
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === run.providerThreadId,
       );
-      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      let message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
       const checkpointScope = projection.checkpointScopes.find(
         (candidate) => candidate.id === rootNode?.checkpointScopeId,
       );
@@ -373,6 +424,7 @@ export const layer: Layer.Layer<
         function* (input: {
           readonly signal: string;
           readonly status: "completed" | "failed";
+          readonly expectedStatus?: "starting" | "running";
           readonly now: DateTime.Utc;
           readonly startedAt?: DateTime.Utc;
           readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
@@ -449,7 +501,7 @@ export const layer: Layer.Layer<
             threadId: projection.thread.id,
             runId,
             activeAttemptId: attempt.id,
-            expectedStatus: "starting",
+            expectedStatus: input.expectedStatus ?? "starting",
             events,
           });
         },
@@ -487,6 +539,41 @@ export const layer: Layer.Layer<
           });
         },
       );
+      if (run.boardBatchId !== undefined) {
+        const batch = { batchId: run.boardBatchId, threadId: input.threadId };
+        const current = yield* boardResponderSelection.reselectBeforeStart(batch);
+        const resumeStopReceipt =
+          boardHandling === undefined ? null : yield* boardHandling.resumeStopReceipt(batch);
+        const stopped = yield* isBoardHandlingStopped({ ...input, resumeStopReceipt }).pipe(
+          Effect.provideService(ProjectionStore.ProjectionStoreV2, projectionStore),
+          Effect.provideService(SqlClient.SqlClient, boardSql),
+        );
+        const context =
+          !current || stopped || boardHandling === undefined
+            ? null
+            : yield* boardHandling.executionContext({ ...batch, runId });
+        if (context === null) {
+          if (stopped && boardHandling !== undefined) yield* boardHandling.holdBatch(batch);
+          yield* settleRunBeforeStart({
+            signal: "board-request-held",
+            status: "completed",
+            now: yield* DateTime.now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item: {
+              type: "error",
+              title: "Board request needs attention",
+              failure: makeProviderFailure({
+                cause: "Board responsibility changed or Stop is holding its recipient.",
+                class: "validation_error",
+                message: "The board request was held before starting a provider turn.",
+              }),
+            },
+          });
+          return;
+        }
+        message = { ...message, text: context };
+      }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
@@ -634,9 +721,46 @@ export const layer: Layer.Layer<
         attemptId: attempt.id,
         providerThreadId: providerThread.id,
         runOrdinal: run.ordinal,
+        ...(run.boardBatchId === undefined ? {} : { boardBatchId: run.boardBatchId }),
         inheritedBackgroundTurnItems,
       });
       const { isCurrentAttemptInStatus } = runControls;
+      const settleBoardRunBeforeStart = Effect.fn(
+        "ProviderTurnStartService.settleBoardBeforeStart",
+      )(function* () {
+        yield* settleRunBeforeStart({
+          signal: "board-request-superseded",
+          status: "completed",
+          expectedStatus: "running",
+          now: yield* DateTime.now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Board request needs attention",
+            failure: makeProviderFailure({
+              cause: "The board provider start is no longer permitted.",
+              class: "validation_error",
+              message: "The board request changed or was held before starting a provider turn.",
+            }),
+          },
+        });
+      });
+      const shouldStartProviderTurn = Effect.fn("ProviderTurnStartService.verifyProviderStart")(
+        function* () {
+          const permitted = yield* runControls.shouldStartProviderTurn();
+          if (!permitted && run.boardBatchId !== undefined)
+            yield* settleBoardRunBeforeStart().pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to settle a superseded board provider start", {
+                  runId,
+                  cause,
+                }),
+              ),
+            );
+          return permitted;
+        },
+      );
 
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
@@ -1415,29 +1539,65 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
-          yield* start({
-            ...(noteContinuation ? promptedInput : turnInput),
-            message: {
-              ...turnInput.message,
-              text:
-                context === "" || goalCommand
-                  ? userText
-                  : `${context}\n\nUser message:\n${userText}`,
-            },
-          }).pipe(
-            // Clear pending handoff markers for refused prompts so the next turn retains the native session.
-            Effect.tapError((error) =>
-              refusedBeforePrompt(error)
-                ? delivery.unsent.pipe(
-                    Effect.catchCause(() =>
-                      Effect.logWarning("Failed to restore unsent context handoffs", {
-                        runId: run.id,
-                      }),
-                    ),
-                  )
-                : Effect.void,
-            ),
-          );
+          const startProvider = Effect.gen(function* () {
+            let currentUserText = userText;
+            if (run.boardBatchId !== undefined) {
+              const batch = { batchId: run.boardBatchId, threadId: input.threadId };
+              if (!(yield* shouldStartProviderTurn())) return false;
+              const currentBoardContext = yield* boardHandling.executionContext({
+                ...batch,
+                runId,
+              });
+              if (currentBoardContext === null) {
+                yield* settleBoardRunBeforeStart();
+                return false;
+              }
+              if (
+                !(yield* boardSelections.markStarted({
+                  ...batch,
+                  now: DateTime.formatIso(yield* DateTime.now),
+                }))
+              ) {
+                yield* settleBoardRunBeforeStart();
+                return false;
+              }
+              currentUserText = currentBoardContext;
+            }
+            yield* start({
+              ...(noteContinuation ? promptedInput : turnInput),
+              message: {
+                ...turnInput.message,
+                text:
+                  context === "" || goalCommand
+                    ? currentUserText
+                    : `${context}\n\nUser message:\n${currentUserText}`,
+              },
+            }).pipe(
+              // Clear pending handoff markers for refused prompts so the next turn retains the native session.
+              Effect.tapError((error) =>
+                refusedBeforePrompt(error)
+                  ? delivery.unsent.pipe(
+                      Effect.catchCause(() =>
+                        Effect.logWarning("Failed to restore unsent context handoffs", {
+                          runId: run.id,
+                        }),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+            );
+            return true;
+          });
+          const accepted = yield* run.boardBatchId === undefined
+            ? startProvider
+            : withBoardHandlingLock(input.threadId, startProvider).pipe(
+                Effect.provideService(ProjectionStore.ProjectionStoreV2, projectionStore),
+                Effect.provideService(
+                  ThreadCommandExecutor.ThreadCommandExecutor,
+                  threadCommandExecutor,
+                ),
+              );
+          if (!accepted) return;
           // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
           yield* delivery.delivered.pipe(
             Effect.catchCause(() =>
@@ -1464,7 +1624,8 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         retryHandoff.length === 0 &&
         restartNote === "" &&
-        !noteContinuation
+        !noteContinuation &&
+        run.boardBatchId === undefined
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
@@ -1497,7 +1658,7 @@ export const layer: Layer.Layer<
           (legacyInputRunIds.size > 0 &&
             sameNativeThread &&
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
-        shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+        shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
@@ -1541,4 +1702,4 @@ export const layer: Layer.Layer<
       ),
     });
   }),
-);
+).pipe(Layer.provide(ThreadCommandExecutor.layer));

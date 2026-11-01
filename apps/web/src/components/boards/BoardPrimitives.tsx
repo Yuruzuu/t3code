@@ -1,33 +1,51 @@
 import type { BoardAuthor } from "@t3tools/contracts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
-import { MessagesSquareIcon, UserRoundIcon } from "lucide-react";
-import { memo, type ReactNode } from "react";
+import { CornerDownRightIcon, MessagesSquareIcon, UserRoundIcon } from "lucide-react";
+import { memo, type ReactNode, type Ref } from "react";
 
 import { useRelativeTimeState } from "~/hooks/useRelativeTimeState";
 import { cn } from "~/lib/utils";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
+import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { providerClients } from "../settings/providerDriverMeta";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { BoardOrb, type BoardOrbSize } from "./BoardOrb";
+import {
+  BoardOrb,
+  BoardWaitingOrb,
+  boardAvatarColor,
+  boardAvatarSizeClass,
+  type BoardOrbSize,
+} from "./BoardOrb";
+import type { BoardWorker } from "./boardsViewModel";
 
 export function boardAuthorName(author: BoardAuthor) {
-  return author.kind === "user" ? "You" : boardPersona(author.threadId).name;
+  return author.kind === "agent"
+    ? boardPersona(author.threadId).name
+    : author.kind === "system"
+      ? "System"
+      : "You";
+}
+
+export function BoardAuthorLabel({
+  author,
+  children,
+}: {
+  author: BoardAuthor;
+  children?: ReactNode;
+}) {
+  return (
+    <span
+      style={author.kind === "agent" ? { color: boardAvatarColor(author.threadId) } : undefined}
+    >
+      {children ?? boardAuthorName(author)}
+    </span>
+  );
 }
 
 export function boardProviderName(author: BoardAuthor) {
   return author.kind === "agent" && author.driver
     ? (providerClients.get(author.driver)?.label ?? "Agent")
     : "Agent";
-}
-
-export function boardPostTitle(text: string) {
-  return (
-    text
-      .trim()
-      .split("\n", 1)[0]
-      ?.replace(/^\s*#{1,6}\s*/, "")
-      .replace(/[*_`]/g, "")
-      .trim() || "Untitled discussion"
-  );
 }
 
 /** Plain-text preview: markdown markers stripped, whitespace collapsed. */
@@ -49,24 +67,42 @@ export const BoardAuthorAvatar = memo(function BoardAuthorAvatar({
   author,
   size = "md",
   ring = false,
+  working = false,
 }: {
   author: BoardAuthor;
   size?: BoardOrbSize;
   ring?: boolean;
+  working?: boolean;
 }) {
   if (author.kind === "agent")
-    return <BoardOrb threadId={author.threadId} size={size} ring={ring} />;
+    return <BoardOrb threadId={author.threadId} size={size} ring={ring} working={working} />;
 
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground",
-        size === "xs" ? "size-4" : size === "sm" ? "size-6" : size === "lg" ? "size-10" : "size-8",
-        ring && "ring-2 ring-background",
+        "inline-flex shrink-0 items-center justify-center text-muted-foreground",
+        boardAvatarSizeClass[size],
+        ring && "rounded-full bg-background ring-2 ring-background",
       )}
     >
-      <UserRoundIcon className={size === "xs" ? "size-2.5" : size === "sm" ? "size-3" : "size-4"} />
+      <span className="inline-flex size-3/4 items-center justify-center rounded-full bg-muted">
+        {author.kind === "system" ? (
+          <MessagesSquareIcon className="size-4" />
+        ) : (
+          <UserRoundIcon
+            className={
+              size === "2xs"
+                ? "size-2.5"
+                : size === "xs"
+                  ? "size-3"
+                  : size === "sm"
+                    ? "size-4"
+                    : "size-4"
+            }
+          />
+        )}
+      </span>
     </span>
   );
 });
@@ -88,51 +124,119 @@ export function BoardTimestamp({ value }: { value: string }) {
 
 /** The agent's chosen role, falling back to its provider so every agent has a byline. */
 export function boardAuthorRole(author: BoardAuthor) {
-  if (author.kind === "user") return null;
+  if (author.kind !== "agent") return null;
   return author.role ?? boardProviderName(author);
 }
 
-/** "Working", not "typing": a running agent may be busy with anything, not this reply. */
-function workingLabel(authors: readonly BoardAuthor[]) {
-  const names = authors.map(boardAuthorName);
-  if (names.length === 1) return `${names[0]} is working`;
-  if (names.length === 2) return `${names[0]} and ${names[1]} are working`;
-  return "Several agents are working";
+/** "Pip · Reviewer": the agent's chosen role, falling back to its provider. */
+export function boardAuthorByline(author: BoardAuthor) {
+  const role = boardAuthorRole(author);
+  return role === null ? boardAuthorName(author) : `${boardAuthorName(author)} · ${role}`;
 }
 
-/** Discord-style presence line; static dots, since a looping animation repaints every frame. */
+const MAX_WORKER_CHIPS = 3;
+
+/** Who is working, above the composer; what each is doing shows under the latest message. */
 export function BoardWorkingIndicator({
-  authors,
+  workers,
+  waiting,
   className,
 }: {
-  authors: readonly BoardAuthor[];
+  workers: readonly BoardWorker[];
+  waiting: boolean;
   className?: string;
 }) {
-  if (authors.length === 0) return null;
+  if (workers.length === 0) {
+    if (!waiting) return null;
+    return (
+      <div role="status" className={cn("flex min-w-0 items-center gap-2", className)}>
+        <BoardWaitingOrb size="xs" />
+        <span className="text-xs text-muted-foreground">Waiting…</span>
+      </div>
+    );
+  }
+  const shown = workers.slice(0, MAX_WORKER_CHIPS);
+  const label =
+    workers.length === 1
+      ? `${boardAuthorName(workers[0]!.author)} is working`
+      : `${workers.length} agents working`;
   return (
-    <span
-      role="status"
-      className={cn(
-        "inline-flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
-        className,
-      )}
-    >
-      <span className="flex shrink-0 -space-x-1.5">
-        {authors.slice(0, 3).map((author) => (
+    <div role="status" className={cn("flex min-w-0 items-center gap-2", className)}>
+      <span aria-hidden="true" className="flex shrink-0 -space-x-1">
+        {shown.map((worker) => (
           <BoardAuthorAvatar
-            key={author.kind === "agent" ? author.threadId : "user"}
-            author={author}
+            key={worker.author.threadId}
+            author={worker.author}
             size="xs"
             ring
+            working
           />
         ))}
       </span>
-      <span className="truncate">
-        <span className="font-medium text-foreground/80">{workingLabel(authors)}</span>
-        <span aria-hidden="true" className="tracking-widest">
-          …
-        </span>
+      <span
+        ref={observeVisibleAnimation}
+        className="relative min-w-0 overflow-hidden text-xs text-muted-foreground"
+      >
+        <span className="block truncate">{label}</span>
+        <ActivityShimmerOverlay>
+          <span className="block truncate">{label}</span>
+        </ActivityShimmerOverlay>
       </span>
+    </div>
+  );
+}
+
+/** Each working agent and the latest thing it said, under the latest message. */
+export function BoardAgentTrails({
+  workers,
+  waiting,
+  listRef,
+}: {
+  workers: readonly BoardWorker[];
+  /** A responder is still being chosen for your message. */
+  waiting: boolean;
+  listRef?: Ref<HTMLUListElement>;
+}) {
+  if (workers.length === 0 && !waiting) return null;
+  return (
+    <ul ref={listRef} aria-label="Working now" className="mt-4 space-y-3">
+      {workers.map((worker) => (
+        <li key={worker.author.threadId} className="flex gap-3">
+          <BoardAuthorAvatar author={worker.author} working />
+          <div className="min-w-0 flex-1">
+            <p className="flex min-h-6 items-center truncate text-sm font-semibold text-foreground">
+              <BoardAuthorLabel author={worker.author} />
+            </p>
+            <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/70">
+              <CornerDownRightIcon aria-hidden="true" className="size-3.5 shrink-0 opacity-70" />
+              <span ref={observeVisibleAnimation} className="relative min-w-0 overflow-hidden">
+                <span className="block truncate">{worker.activity}</span>
+                <ActivityShimmerOverlay>
+                  <span className="block truncate">{worker.activity}</span>
+                </ActivityShimmerOverlay>
+              </span>
+            </p>
+          </div>
+        </li>
+      ))}
+      {waiting && (
+        <li role="status" className="flex items-center gap-3">
+          <BoardWaitingOrb />
+          <p className="text-sm font-semibold text-foreground">Waiting…</p>
+        </li>
+      )}
+    </ul>
+  );
+}
+
+/** How many new messages something has: a blue circle that stretches for longer numbers. */
+export function BoardUnreadCount({ count }: { count: number }) {
+  return (
+    <span
+      aria-label={`${count} new ${count === 1 ? "message" : "messages"}`}
+      className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-info px-1 text-3xs font-semibold text-white tabular-nums"
+    >
+      {count > 99 ? "99+" : count}
     </span>
   );
 }

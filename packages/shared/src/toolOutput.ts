@@ -43,6 +43,49 @@ interface CompactToolOutput {
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
+  boardDiscussion?: BoardDiscussionReference;
+}
+
+/** A board discussion a post started, kept so the thread can link to it. */
+export interface BoardDiscussionReference {
+  rootId: string;
+  channelName: string;
+  title: string;
+}
+
+const MAX_BOARD_TITLE_CHARS = 160;
+
+function readCompactBoardDiscussion(value: unknown): BoardDiscussionReference | undefined {
+  if (!Predicate.isObject(value)) return undefined;
+  const rootId = boundedId(value.rootId);
+  const channelName = boundedId(value.channelName);
+  const title = typeof value.title === "string" ? value.title : undefined;
+  return rootId === undefined || channelName === undefined || title === undefined
+    ? undefined
+    : { rootId, channelName, title: Array.from(title).slice(0, MAX_BOARD_TITLE_CHARS).join("") };
+}
+
+function readBoardDiscussion(value: unknown): BoardDiscussionReference | undefined {
+  if (!Predicate.isObject(value)) return undefined;
+  const rootId = boundedId(value.rootId);
+  const channelName = boundedId(value.channelName);
+  // Replies point at an existing discussion; only an opening post starts one.
+  if (rootId === undefined || channelName === undefined || boundedId(value.id) !== rootId) {
+    return undefined;
+  }
+  const firstLine =
+    typeof value.text === "string"
+      ? (value.text
+          .trim()
+          .split("\n", 1)[0]
+          ?.replace(/^\s*#{1,6}\s*/, "")
+          .trim() ?? "")
+      : "";
+  return {
+    rootId,
+    channelName,
+    title: Array.from(firstLine).slice(0, MAX_BOARD_TITLE_CHARS).join("") || "Untitled discussion",
+  };
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -123,6 +166,10 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
+    // Clients compact what the server already compacted, so accept both shapes.
+    const boardDiscussion =
+      readBoardDiscussion(data.post) ?? readCompactBoardDiscussion(data.boardDiscussion);
+    if (boardDiscussion !== undefined) output.boardDiscussion = boardDiscussion;
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
@@ -183,6 +230,15 @@ export function htmlRenderFromToolItem(item: {
   if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.htmlRender;
+}
+
+export function boardDiscussionFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): BoardDiscussionReference | undefined {
+  if (resolveT3McpToolId(item.toolName) !== "board_post") return undefined;
+  const output = compactDynamicToolOutput(item.output);
+  return output?.isError ? undefined : output?.boardDiscussion;
 }
 
 /** Accept app references only when server and tool match the item, so tools cannot impersonate another app source. */

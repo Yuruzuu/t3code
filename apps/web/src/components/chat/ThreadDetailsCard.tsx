@@ -54,7 +54,10 @@ export function ThreadDetailsCard({
   });
   const contentHeights =
     measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
-  const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
+  // Outside a chat canvas nothing bounds the popover but its own max height, where it scrolls.
+  const height =
+    placement?.height ??
+    (canvas ? Math.max(0, canvas.container.height - 52) : Number.POSITIVE_INFINITY);
   const density = resolveThreadDetailsCardDensity(height, contentHeights);
   const measureDetailsCard = canvas?.measureDetailsCard;
   const cardWidth = preferredPlacement?.width;

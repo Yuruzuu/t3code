@@ -1,3 +1,7 @@
+import * as MessageBoardHandlingEvents from "../messageBoard/MessageBoardHandlingEvents.ts";
+import * as EventSink from "./EventSink.ts";
+import * as PubSub from "effect/PubSub";
+import { isBoardHandlingStopped } from "./BoardHandlingGuard.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -68,6 +72,7 @@ const layerTest = ThreadManagementService.layer.pipe(
   ),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+  Layer.provideMerge(MessageBoardHandlingEvents.layer),
 );
 
 const encodeEffectRequest = Schema.encodeSync(Schema.fromJsonString(OrchestrationEffectRequestV2));
@@ -586,6 +591,19 @@ it.effect.each(["run.interrupt", "thread.stop"] as const)(
         "delegated-tasks.stop",
       );
 
+      assert.isTrue(yield* isBoardHandlingStopped({ threadId: childThreadId }));
+      assert.isTrue(
+        yield* isBoardHandlingStopped({
+          threadId: childThreadId,
+          resumeStopReceipt: Number.MAX_SAFE_INTEGER,
+        }),
+      );
+      assert.isFalse(
+        yield* isBoardHandlingStopped({
+          threadId: parentThreadId,
+          resumeStopReceipt: Number.MAX_SAFE_INTEGER,
+        }),
+      );
       yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
       assert.deepEqual(yield* threadState(childThreadId), {
         runs: ["interrupted", "queued:held"],
@@ -1550,5 +1568,244 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         )?.status,
         "running",
       );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a board dispatch cannot admit an unknown responsibility batch", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:board-stale-batch");
+    yield* createWatchingThread(threadId, 901);
+    const result = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("board:unknown-batch"),
+        threadId,
+        messageId: MessageId.make("board:unknown-batch"),
+        boardBatchId: "unknown-batch",
+        text: "A stale board request",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 0);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("Stop on an idle recipient holds board work until an explicit user send", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:board-idle-stop");
+    yield* createWatchingThread(threadId, 902);
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("board:idle-stop"),
+      threadId,
+    });
+    assert.isTrue(yield* isBoardHandlingStopped({ threadId }));
+    assert.isFalse(
+      yield* isBoardHandlingStopped({ threadId, resumeStopReceipt: Number.MAX_SAFE_INTEGER }),
+    );
+    yield* send(threadId, "Resume ordinary work", "start_immediately");
+    assert.isFalse(yield* isBoardHandlingStopped({ threadId }));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "an explicit board recipient stays held after Stop instead of assigning another agent",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:board-explicit-stopped");
+      yield* createWatchingThread(threadId, 904);
+      yield* createWatchingThread(ThreadId.make("thread:board-other-recipient"), 905);
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("board:explicit-stop"),
+        threadId,
+      });
+      yield* sql`INSERT INTO board_channels(name,created_by_json,created_at) VALUES('explicit','{"kind":"user"}','2026-10-30T00:00:00.000Z')`;
+      yield* sql`INSERT INTO board_posts(id,channel_name,root_id,author_json,text,created_at) VALUES('explicit-root','explicit','explicit-root','{"kind":"user"}','Reply to the named agent','2026-10-30T00:00:00.000Z')`;
+      yield* sql`INSERT INTO board_discussions(root_id) VALUES('explicit-root')`;
+      yield* sql`INSERT INTO board_dispatch_batches(id,root_id,recipient_thread_id,requests_json) VALUES('explicit-batch','explicit-root',${threadId},'[{"id":"explicit-request","generation":0}]')`;
+      yield* sql`INSERT INTO board_responsibilities(id,root_id,post_id,recipient_thread_id,status,batch_id) VALUES('explicit-request','explicit-root','explicit-root',${threadId},'queued','explicit-batch')`;
+      const result = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("board:explicit-request"),
+          threadId,
+          messageId: MessageId.make("board:explicit-request"),
+          boardBatchId: "explicit-batch",
+          text: "Reply to the named agent",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      const requests = yield* sql<{
+        recipient_thread_id: string;
+        status: string;
+      }>`SELECT recipient_thread_id,status FROM board_responsibilities`;
+      assert.deepEqual(requests, [{ recipient_thread_id: threadId, status: "held" }]);
+      assert.isEmpty((yield* orchestrator.getThreadProjection(threadId)).runs);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a durable board batch admits once and scoped resume preserves unrelated held work", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:board-scoped-resume");
+    yield* createWatchingThread(threadId, 903);
+    yield* send(threadId, "active before Stop", "start_immediately");
+    yield* send(threadId, "unrelated queued work", "queue_after_active");
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("board:scoped-stop"),
+      threadId,
+    });
+    yield* sql`INSERT INTO board_channels(name,created_by_json,created_at) VALUES('board-guard','{"kind":"user"}','2026-10-30T00:00:00.000Z')`;
+    yield* sql`INSERT INTO board_posts(id,channel_name,root_id,author_json,text,created_at) VALUES('board-guard-root','board-guard','board-guard-root','{"kind":"user"}','Handle only this request','2026-10-30T00:00:00.000Z')`;
+    yield* sql`INSERT INTO board_discussions(root_id) VALUES('board-guard-root')`;
+    yield* sql`INSERT INTO board_dispatch_batches(id,root_id,recipient_thread_id,requests_json,scoped_resume,scoped_stop_receipt) VALUES('board-guard-batch','board-guard-root',${threadId},'[{"id":"board-guard-request","generation":0}]',1,(SELECT MAX(rowid) FROM orchestration_command_receipts WHERE aggregate_id=${threadId} AND command_type='thread.stop' AND status='accepted'))`;
+    yield* sql`INSERT INTO board_responsibilities(id,root_id,post_id,recipient_thread_id,status,batch_id) VALUES('board-guard-request','board-guard-root','board-guard-root',${threadId},'queued','board-guard-batch')`;
+    const command = {
+      type: "message.dispatch" as const,
+      commandId: CommandId.make("board:scoped-request"),
+      threadId,
+      messageId: MessageId.make("board:scoped-request"),
+      boardBatchId: "board-guard-batch",
+      text: "Handle only this request",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" as const },
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+    };
+    yield* orchestrator.dispatch(command);
+    const replay = yield* orchestrator.dispatch(command);
+    assert.isTrue(replay.replayed);
+    const state = yield* orchestrator.getThreadProjection(threadId);
+    assert.deepEqual(
+      state.runs.map((run) => [run.status, run.queueHeld ?? false]),
+      [
+        ["interrupted", false],
+        ["queued", true],
+        ["starting", false],
+      ],
+    );
+    assert.equal(state.runs.at(-1)?.boardBatchId, "board-guard-batch");
+    assert.isTrue(yield* isBoardHandlingStopped({ threadId }));
+    const requests = yield* sql<{
+      run_id: string;
+    }>`SELECT run_id FROM board_responsibilities WHERE id='board-guard-request'`;
+    assert.equal(requests[0]?.run_id, state.runs.at(-1)?.id);
+    const boardEvents = yield* MessageBoardHandlingEvents.MessageBoardHandlingEvents;
+    const updates = yield* PubSub.subscribe(boardEvents.changes);
+    const sink = yield* EventSink.EventSinkV2;
+    const completedAt = yield* DateTime.now;
+    const run = state.runs.at(-1)!;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:board-guard-finished"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: completedAt,
+          payload: { ...run, status: "completed", completedAt },
+        },
+      ],
+    });
+    const update = yield* PubSub.take(updates);
+    assert.equal(update.type, "handling-changed");
+    if (update.type === "handling-changed")
+      assert.equal(update.handling.responsibilities[0]?.status, "needs-attention");
+    assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 3);
+    const fences = yield* sql<{
+      scoped_stop_receipt: number;
+    }>`SELECT scoped_stop_receipt FROM board_dispatch_batches WHERE id='board-guard-batch'`;
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("board:stop-after-resume"),
+      threadId,
+    });
+    assert.isTrue(
+      yield* isBoardHandlingStopped({
+        threadId,
+        resumeStopReceipt: fences[0]!.scoped_stop_receipt,
+      }),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([false, true])(
+  "replaces an automatic recipient stopped before provider start (admitted=%s)",
+  (admitted) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:board-auto-stopped");
+      const replacementId = ThreadId.make("thread:board-auto-replacement");
+      yield* createWatchingThread(threadId, 906);
+      yield* createWatchingThread(replacementId, 907);
+      yield* sql`INSERT INTO board_channels(name,created_by_json,created_at) VALUES('automatic','{"kind":"user"}','2026-10-30T00:00:00.000Z')`;
+      yield* sql`INSERT INTO board_posts(id,channel_name,root_id,author_json,text,created_at) VALUES('automatic-root','automatic','automatic-root','{"kind":"user"}','Please respond','2026-10-30T00:00:00.000Z')`;
+      yield* sql`INSERT INTO board_discussions(root_id) VALUES('automatic-root')`;
+      for (const recipientId of [threadId, replacementId])
+        yield* sql`INSERT INTO board_subscriptions(viewer_key,target_kind,target) VALUES(${`thread:${recipientId}`},'thread','automatic-root')`;
+      yield* sql`INSERT INTO board_responder_selections(id,root_id,status,recipient_thread_id,deadline_at,created_at,updated_at) VALUES('automatic-selection','automatic-root','selected',${threadId},'2026-10-30T00:00:15.000Z','2026-10-30T00:00:00.000Z','2026-10-30T00:00:00.000Z')`;
+      yield* sql`INSERT INTO board_responder_selection_posts(selection_id,post_id) VALUES('automatic-selection','automatic-root')`;
+      yield* sql`INSERT INTO board_dispatch_batches(id,root_id,recipient_thread_id,requests_json) VALUES('automatic-batch','automatic-root',${threadId},'[{"id":"automatic-request","generation":0}]')`;
+      yield* sql`INSERT INTO board_responsibilities(id,root_id,post_id,recipient_thread_id,status,batch_id,selection_id,selection_generation) VALUES('automatic-request','automatic-root','automatic-root',${threadId},'queued','automatic-batch','automatic-selection',0)`;
+      if (admitted) {
+        yield* send(threadId, "Unrelated active work", "start_immediately");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("board:automatic-admitted"),
+          threadId,
+          messageId: MessageId.make("board:automatic-admitted"),
+          boardBatchId: "automatic-batch",
+          text: "Please respond",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("board:automatic-stop"),
+        threadId,
+      });
+      const result = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("board:automatic-request"),
+          threadId,
+          messageId: MessageId.make("board:automatic-request"),
+          boardBatchId: "automatic-batch",
+          text: "Please respond",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      const requests = yield* sql<{
+        recipient_thread_id: string;
+        selection_generation: number;
+      }>`SELECT recipient_thread_id,selection_generation FROM board_responsibilities`;
+      assert.deepEqual(requests, [{ recipient_thread_id: replacementId, selection_generation: 1 }]);
+      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, admitted ? 2 : 0);
+      const outbox =
+        yield* sql`SELECT 1 FROM orchestration_v2_effect_outbox WHERE effect_type='board-dispatch' AND thread_id=${replacementId}`;
+      assert.lengthOf(outbox, 1);
     }).pipe(Effect.provide(layerTest)),
 );

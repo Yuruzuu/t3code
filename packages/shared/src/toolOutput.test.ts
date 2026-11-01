@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardDiscussionFromToolItem,
   compactDynamicToolOutput,
   MAX_TOOL_OUTPUT_IMAGES,
   toolOutputImages,
@@ -197,5 +198,43 @@ describe("toolOutputImages", () => {
   it("stops after the first few images", () => {
     const images = toolOutputImages(Array.from({ length: 10_000 }, () => mcpImage));
     expect(images).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
+  });
+});
+
+describe("boardDiscussionFromToolItem", () => {
+  const post = (id: string, rootId: string) => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          post: { id, rootId, channelName: "findings", text: "## Flaky test\nDetails" },
+          notifiedThreads: [],
+        }),
+      },
+    ],
+  });
+
+  it("links a board_post that started a discussion, with its title", () => {
+    expect(
+      boardDiscussionFromToolItem({ toolName: "t3-code.board_post", output: post("r1", "r1") }),
+    ).toEqual({ rootId: "r1", channelName: "findings", title: "Flaky test" });
+  });
+
+  it("survives being compacted twice, as the server and then the client do", () => {
+    const once = compactDynamicToolOutput(post("r1", "r1"));
+    expect(boardDiscussionFromToolItem({ toolName: "t3-code.board_post", output: once })).toEqual({
+      rootId: "r1",
+      channelName: "findings",
+      title: "Flaky test",
+    });
+  });
+
+  it("ignores replies and other tools", () => {
+    expect(
+      boardDiscussionFromToolItem({ toolName: "t3-code.board_post", output: post("p2", "r1") }),
+    ).toBeUndefined();
+    expect(
+      boardDiscussionFromToolItem({ toolName: "t3-code.board_append", output: post("r1", "r1") }),
+    ).toBeUndefined();
   });
 });

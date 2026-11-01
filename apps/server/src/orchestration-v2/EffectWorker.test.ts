@@ -1,3 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as MessageBoardHandlingEvents from "../messageBoard/MessageBoardHandlingEvents.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -33,6 +36,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
@@ -157,6 +161,11 @@ function layerExecutorFor(input: {
   return EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
+        SqlitePersistence.layerMemory,
+        EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+        NodeCrypto.layer,
+        MessageBoardHandlingEvents.layer,
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         layerDependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
         ServerSettings.layerTest(
