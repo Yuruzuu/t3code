@@ -1717,6 +1717,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       },
     ).pipe(Effect.map((result) => result.exitCode === 0));
 
+  const readRemoteTrackingRefs: GitVcsDriver.GitVcsDriver["Service"]["readRemoteTrackingRefs"] =
+    Effect.fn("GitVcsDriver.readRemoteTrackingRefs")(function* (cwd) {
+      const result = yield* executeGit("GitVcsDriver.readRemoteTrackingRefs", cwd, [
+        "for-each-ref",
+        "--format=%(objectname) %(refname) %(symref)",
+        "refs/remotes",
+      ]);
+      return result.stdoutTruncated ? null : result.stdout;
+    });
+
   const remoteExists: GitVcsDriver.GitVcsDriver["Service"]["remoteExists"] = (input) =>
     executeGit(
       "GitVcsDriver.remoteExists",
@@ -5178,6 +5188,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     remoteExists,
     remoteBranchExists,
+    readRemoteTrackingRefs,
     resolveRemoteTrackingCommit,
     resolveWorktreeBaseRemote,
     fetchWorktreeBaseCommit: Effect.fnUntraced(function* (input) {

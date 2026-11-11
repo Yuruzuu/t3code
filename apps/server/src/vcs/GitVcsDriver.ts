@@ -412,6 +412,8 @@ export class GitVcsDriver extends Context.Service<
     readonly remoteBranchExists: (
       input: GitRemoteBranchExistsInput,
     ) => Effect.Effect<boolean, GitCommandError>;
+    /** Every remote-tracking ref and its target; null when the listing was truncated. */
+    readonly readRemoteTrackingRefs: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
     readonly resolveRemoteTrackingCommit: (
       input: GitResolveRemoteTrackingCommitInput,
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;

@@ -88,6 +88,7 @@ export class GitWorkflowService extends Context.Service<
       readonly cwd: string;
       readonly remoteName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
+    readonly readRemoteTrackingRefs: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
     readonly remoteBranchExists: (input: {
       readonly cwd: string;
       readonly remoteName: string;
@@ -433,6 +434,11 @@ export const make = Effect.gen(function* () {
     remoteBranchExists: Effect.fn("GitWorkflowService.remoteBranchExists")(function (input) {
       return ensureGitCommand("GitWorkflowService.remoteBranchExists", input.cwd).pipe(
         Effect.andThen(git.remoteBranchExists(input)),
+      );
+    }),
+    readRemoteTrackingRefs: Effect.fn("GitWorkflowService.readRemoteTrackingRefs")(function (cwd) {
+      return ensureGitCommand("GitWorkflowService.readRemoteTrackingRefs", cwd).pipe(
+        Effect.andThen(git.readRemoteTrackingRefs(cwd)),
       );
     }),
     resolveRemoteTrackingCommit: Effect.fn("GitWorkflowService.resolveRemoteTrackingCommit")(

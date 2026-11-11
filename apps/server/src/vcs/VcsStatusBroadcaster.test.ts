@@ -99,6 +99,7 @@ function layerTestFor(state: {
     ),
     Layer.provide(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
+        readRemoteTrackingRefs: () => Effect.succeed(null),
         localStatus: () =>
           Effect.suspend(() => {
             state.localStatusCalls += 1;
@@ -589,6 +590,7 @@ describe("VcsStatusBroadcaster", () => {
         ),
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
+            readRemoteTrackingRefs: () => Effect.succeed(null),
             localStatus: () => Effect.succeed(localStatus),
             currentBranch: () => Effect.succeed(localStatus.refName),
             remoteStatus: () => Effect.succeed(remoteStatus),
@@ -685,6 +687,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          readRemoteTrackingRefs: () => Effect.succeed(null),
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
           remoteStatus: () =>
@@ -731,6 +734,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          readRemoteTrackingRefs: () => Effect.succeed(null),
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
           remoteStatus: () =>
@@ -780,6 +784,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          readRemoteTrackingRefs: () => Effect.succeed(null),
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -863,6 +868,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(layerBackgroundPolicy(() => true)),
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
+            readRemoteTrackingRefs: () => Effect.succeed(null),
             localStatus: (input) =>
               Effect.sync(() => {
                 seenCwds.push(input.cwd);
@@ -951,7 +957,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
-  it.effect("an explicit refresh reads local totals after the fetch", () => {
+  it.effect("an explicit refresh rereads local totals only when remote refs moved", () => {
     return Effect.gen(function* () {
       const fetchStarted = yield* Deferred.make<void>();
       const finishFetch = yield* Deferred.make<void>();
@@ -959,6 +965,8 @@ describe("VcsStatusBroadcaster", () => {
         ...baseLocalStatus,
         branchChanges: { baseRef: "origin/main", insertions: 745, deletions: 24 },
       };
+      let remoteRefs = "a refs/remotes/origin/main ";
+      let localStatusCalls = 0;
       let cachedLocal: VcsStatusLocalResult | undefined;
       const readLocalStatus = () => Effect.sync(() => (cachedLocal ??= local));
       const layerTest = VcsStatusBroadcaster.layer.pipe(
@@ -966,7 +974,11 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(layerBackgroundPolicy(() => true)),
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
-            localStatus: readLocalStatus,
+            localStatus: () =>
+              Effect.sync(() => {
+                localStatusCalls += 1;
+              }).pipe(Effect.andThen(readLocalStatus())),
+            readRemoteTrackingRefs: () => Effect.sync(() => remoteRefs),
             invalidateStatus: () =>
               Effect.sync(() => {
                 cachedLocal = undefined;
@@ -995,9 +1007,16 @@ describe("VcsStatusBroadcaster", () => {
           ...baseLocalStatus,
           branchChanges: { baseRef: "origin/main", insertions: 0, deletions: 0 },
         };
+        remoteRefs = "b refs/remotes/origin/main ";
         yield* Deferred.succeed(finishFetch, undefined);
         const status = yield* Fiber.join(refresh);
         assert.deepStrictEqual(status.branchChanges, local.branchChanges);
+        assert.strictEqual(localStatusCalls, 2);
+
+        // A fetch that moves nothing cannot change local status.
+        const unchanged = yield* broadcaster.refreshStatus("/repo");
+        assert.deepStrictEqual(unchanged.branchChanges, local.branchChanges);
+        assert.strictEqual(localStatusCalls, 3);
       }).pipe(Effect.provide(layerTest));
     });
   });
@@ -1265,6 +1284,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          readRemoteTrackingRefs: () => Effect.succeed(null),
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;

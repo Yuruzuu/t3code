@@ -454,6 +454,9 @@ export const make = Effect.gen(function* () {
       : null;
   });
 
+  const readRemoteTrackingRefs = (cwd: string) =>
+    workflow.readRemoteTrackingRefs(cwd).pipe(Effect.orElseSucceed(() => null));
+
   const maybeAutoPull = Effect.fn("VcsStatusBroadcaster.maybeAutoPull")(function* (
     cwd: string,
     remoteRead: CachedRemoteStatus | null,
@@ -537,6 +540,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    const remoteRefsBefore = options?.localOnly ? null : yield* readRemoteTrackingRefs(cwd);
     yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
       // Never cache a remote here: readers take `value: null` as "read and found no PR".
@@ -550,8 +554,13 @@ export const make = Effect.gen(function* () {
         // Bump the PR lookup epoch after earlier remote writers have finished.
         yield* workflow.invalidateStatus(cwd);
         const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
-        // Fetch can move the base used for local Changes totals.
-        yield* refreshLocalStatusCore(cwd);
+        // Fetch can move the base used for local Changes totals, and only through remote refs.
+        if (
+          remoteRefsBefore === null ||
+          remoteRefsBefore !== (yield* readRemoteTrackingRefs(cwd))
+        ) {
+          yield* refreshLocalStatusCore(cwd);
+        }
         // Without a fetch, the cached behind count cannot justify an automatic pull.
         const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remoteRead, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
