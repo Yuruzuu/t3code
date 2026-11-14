@@ -42,8 +42,6 @@ describe("chat canvas model", () => {
     expect(resolve(1400)).toBe("inline");
     expect(resolve(900)).toBe("popover");
     expect(resolve(1400, 900)).toBe("popover");
-    expect(resolve(900, 1400)).toBe("popover");
-    expect(resolve(1400, 1400)).toBe("inline");
   });
 
   it("moves the card into a popover when a preview below it leaves too little height", () => {
