@@ -85,5 +85,11 @@ if (holdPort) {
   const probe = createConnection(Number(holdPort), "127.0.0.1", () => {
     probe.write(process.pid + "\n");
   });
-  probe.on("data", () => process.exit());
+  const workingDirectory = process.cwd();
+  const reportPath = process.env.T3_FAKE_CLAUDE_HOLD_REPORT;
+  const { existsSync, writeFileSync } = await import("node:fs");
+  probe.on("data", () => {
+    if (reportPath) writeFileSync(reportPath, String(existsSync(workingDirectory)));
+    process.exit();
+  });
 }

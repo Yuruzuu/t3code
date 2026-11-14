@@ -60,6 +60,7 @@ function withFakeClaudeEnv<A, E, R>(
     rejectsNoSessionPersistence?: boolean;
     lifecyclePort?: number;
     holdPort?: number;
+    holdReportPath?: string;
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
@@ -84,6 +85,7 @@ function withFakeClaudeEnv<A, E, R>(
         : undefined,
       T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
       T3_FAKE_CLAUDE_HOLD_PORT: input.holdPort === undefined ? undefined : String(input.holdPort),
+      T3_FAKE_CLAUDE_HOLD_REPORT: input.holdReportPath,
       T3_FAKE_CLAUDE_STDERR: input.stderr,
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
       T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
@@ -236,9 +238,12 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     }),
   );
 
-  it.effect("returns the result while the Claude CLI is still exiting", () =>
+  it.effect("returns the result while the Claude CLI is still exiting in its title directory", () =>
     Effect.gen(function* () {
       const probe = yield* makeProcessProbe;
+      const fs = yield* FileSystem.FileSystem;
+      const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-hold-" });
+      const holdReportPath = `${reportDir}/cwd-exists`;
       yield* withFakeClaudeEnv(
         {
           output: JSON.stringify({
@@ -248,6 +253,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             structured_output: { title: "Reconnect failures" },
           }),
           holdPort: probe.port,
+          holdReportPath,
         },
         (textGeneration) =>
           Effect.gen(function* () {
@@ -265,6 +271,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             expect(yield* probe.hasExited).toBe(false);
             yield* probe.release;
             yield* probe.exited;
+            expect(yield* fs.readFileString(holdReportPath)).toBe("true");
           }),
       );
     }),

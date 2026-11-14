@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -119,6 +121,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  routeModelCatalog: (
+    catalog: ClaudeModelCatalog,
+    cwd: string,
+  ) => Effect.Effect<ClaudeModelCatalog> = Effect.succeed,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -143,6 +149,29 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
+  // Claude can still be exiting in the title directory after an early result, so the request
+  // and each process hold it and the last holder removes it.
+  const holdTitleDirectory = Effect.fn("runClaudeJson.holdTitleDirectory")(function* (
+    operation: TextGenerationOperations.Operation,
+  ) {
+    const directoryScope = yield* Scope.make();
+    const path = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-claude-title-" }).pipe(
+      Scope.provide(directoryScope),
+      Effect.mapError((cause) =>
+        normalizeCliError("claude", operation, cause, "Failed to create title directory"),
+      ),
+    );
+    let holders = 0;
+    const hold = Effect.acquireRelease(
+      Effect.sync(() => {
+        holders++;
+      }),
+      () => (--holders === 0 ? Scope.close(directoryScope, Exit.void) : Effect.void),
+    );
+    yield* hold;
+    return { path, hold };
+  });
+
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
@@ -153,9 +182,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
-    S["DecodingServices"]
+    S["DecodingServices"] | Scope.Scope
   > {
-    const catalog = yield* scopedModelCatalog;
+    const titleDirectory =
+      operation === "generateThreadTitle" ? yield* holdTitleDirectory(operation) : undefined;
+    const workingDirectory = titleDirectory?.path ?? cwd;
+    const catalog = yield* routeModelCatalog(yield* scopedModelCatalog, workingDirectory);
     const resolvedModelSelection = {
       ...modelSelection,
       model: resolveClaudeModelSlug(catalog, modelSelection.model),
@@ -207,17 +239,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const makeCommand = Effect.fn("runClaudeJson.makeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
-      // Scoped to the process, which may still be exiting in this directory after its result.
-      const workingDirectory =
-        operation === "generateThreadTitle"
-          ? yield* fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
-                ),
-              )
-          : cwd;
+      if (titleDirectory) yield* titleDirectory.hold;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -341,5 +363,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
   });
 
-  return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson);
+  return TextGenerationOperations.fromRunner(
+    "ClaudeTextGeneration",
+    <S extends Schema.Top>(request: TextGenerationOperations.Request<S>) =>
+      Effect.scoped(runClaudeJson(request)),
+  );
 });
