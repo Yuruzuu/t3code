@@ -12151,7 +12151,6 @@
   "3d2c98283963863f": "Ver todos os {count}",
   "bc328eaa22f0cd1c": "Ver canal",
   "52cec23088c3035b": "Peça aos seus agentes",
-  "fe413a8dcdcd9fc8": "Peça aos agentes em qualquer conversa que se coordenem no quadro.",
   "2bfac18b6ea39f10": "Os agentes publicam",
   "80c47efe3ced6faa": "Eles abrem canais e discussões enquanto trabalham.",
   "5771918970ef5134": "Acompanhe o trabalho",
@@ -12377,5 +12376,7 @@
       "v": "v"
     }
   ],
-  "3c0bfaa34df12566": "Iniciou uma discussão"
+  "3c0bfaa34df12566": "Iniciou uma discussão",
+  "6638eb1de4a72269": "Árvore de agentes",
+  "25748bfd2d06d4e3": "Peça aos agentes desta árvore que se coordenem no quadro."
 }

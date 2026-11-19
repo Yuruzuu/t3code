@@ -49,11 +49,16 @@ const resolveTarget = Effect.fn("MessageBoardToolkit.resolveTarget")(function* (
     : { kind: "thread" as const, rootId: input.thread_id! };
 });
 
-const caller = Effect.fn("MessageBoardToolkit.caller")(function* () {
+const caller = Effect.fn("MessageBoardToolkit.caller")(function* (
+  board: MessageBoardService.MessageBoardService["Service"],
+) {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   const threadScope = yield* McpInvocationContext.requireThreadScope(scope, "Message board");
   return {
     scope: threadScope,
+    boardTreeId: yield* board
+      .treeForThread(threadScope.thread.threadId)
+      .pipe(Effect.mapError(boardFailure("treeForThread"))),
     viewer: { kind: "thread" as const, threadId: threadScope.thread.threadId },
   };
 });
@@ -71,80 +76,89 @@ const make = Effect.gen(function* () {
   const subscriptionViewer = Effect.fn("MessageBoardToolkit.subscriptionViewer")(function* (
     targetThread: ThreadId | undefined,
   ) {
-    const { viewer } = yield* caller();
-    if (targetThread === undefined || targetThread === viewer.threadId) return viewer;
+    const { viewer, boardTreeId } = yield* caller(board);
+    if (targetThread === undefined || targetThread === viewer.threadId)
+      return { viewer, boardTreeId };
+    const targetTreeId = yield* board
+      .treeForThread(targetThread)
+      .pipe(Effect.mapError(boardFailure("treeForThread")));
+    if (targetTreeId !== boardTreeId)
+      return yield* new MessageBoardError({
+        code: "not_found",
+        message: "The agent is not on this board.",
+      });
     yield* board.agentAuthor(targetThread).pipe(Effect.mapError(boardFailure("agentAuthor")));
-    return { kind: "thread" as const, threadId: targetThread };
+    return { viewer: { kind: "thread" as const, threadId: targetThread }, boardTreeId };
   });
 
   return {
     board_read_handling: McpToolAccess.readsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .readHandling({ ...input, viewer })
+          .readHandling({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("readHandling")));
       }),
     ),
     board_assign_lead: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .assignLead({ ...input, viewer })
+          .assignLead({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("assignLead")));
       }),
     ),
     board_update_context: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .updateContext({ ...input, viewer })
+          .updateContext({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("updateContext")));
       }),
     ),
     board_reassign_request: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .reassignRequest({ ...input, viewer })
+          .reassignRequest({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("reassignRequest")));
       }),
     ),
     board_resume_request: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .resumeRequest({ ...input, viewer })
+          .resumeRequest({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("resumeRequest")));
       }),
     ),
     board_report_outcome: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .reportOutcome({ ...input, viewer })
+          .reportOutcome({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("reportOutcome")));
       }),
     ),
     board_close_discussion: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .closeDiscussion({ ...input, viewer })
+          .closeDiscussion({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("closeDiscussion")));
       }),
     ),
     board_reopen_discussion: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
-          .reopenDiscussion({ ...input, viewer })
+          .reopenDiscussion({ ...input, viewer, boardTreeId })
           .pipe(Effect.mapError(boardFailure("reopenDiscussion")));
       }),
     ),
     board_set_role: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer } = yield* caller(board);
         yield* board
           .setRole({ threadId: viewer.threadId, role: input.role })
           .pipe(Effect.mapError(boardFailure("setRole")));
@@ -153,9 +167,13 @@ const make = Effect.gen(function* () {
     ),
     board_get_channels: McpToolAccess.readsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const channels = yield* board
-          .listChannels({ viewer, ...(input.query === undefined ? {} : { query: input.query }) })
+          .listChannels({
+            viewer,
+            boardTreeId,
+            ...(input.query === undefined ? {} : { query: input.query }),
+          })
           .pipe(Effect.mapError(boardFailure("listChannels")));
         return {
           you: { name: boardPersona(viewer.threadId).name, threadId: viewer.threadId },
@@ -166,20 +184,25 @@ const make = Effect.gen(function* () {
     ),
     board_create_channel: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const author = yield* board
           .agentAuthor(viewer.threadId)
           .pipe(Effect.mapError(boardFailure("agentAuthor")));
         const channel = yield* board
           .createChannel({
             author,
+            boardTreeId,
             name: input.channel_name,
             ...(input.description === undefined ? {} : { description: input.description }),
           })
           .pipe(Effect.mapError(boardFailure("createChannel")));
         if (input.subscribe !== false) {
           yield* board
-            .subscribe({ viewer, target: { kind: "channel", channelName: channel.name } })
+            .subscribe({
+              viewer,
+              boardTreeId,
+              target: { kind: "channel", channelName: channel.name },
+            })
             .pipe(Effect.mapError(boardFailure("subscribe")));
         }
         return namedChannel(channel);
@@ -187,12 +210,17 @@ const make = Effect.gen(function* () {
     ),
     board_upsert_channel: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const author = yield* board
           .agentAuthor(viewer.threadId)
           .pipe(Effect.mapError(boardFailure("agentAuthor")));
         const channel = yield* board
-          .upsertChannel({ author, name: input.channel_name, description: input.description })
+          .upsertChannel({
+            author,
+            boardTreeId,
+            name: input.channel_name,
+            description: input.description,
+          })
           .pipe(Effect.mapError(boardFailure("upsertChannel")));
         return namedChannel(channel);
       }),
@@ -200,13 +228,14 @@ const make = Effect.gen(function* () {
     board_append: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const author = yield* board
           .agentAuthor(viewer.threadId)
           .pipe(Effect.mapError(boardFailure("agentAuthor")));
         const post = yield* board
           .post({
             author,
+            boardTreeId,
             destination:
               target.kind === "channel" ? target : { kind: "reply", rootId: target.rootId },
             text: input.text,
@@ -223,10 +252,11 @@ const make = Effect.gen(function* () {
     ),
     board_list_threads: McpToolAccess.readsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const result = yield* reader
           .listThreads({
             viewer,
+            boardTreeId,
             channelName: input.channel_name,
             sort: input.sort ?? "activity",
             limit: input.limit ?? 20,
@@ -238,10 +268,11 @@ const make = Effect.gen(function* () {
     ),
     board_read_thread: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* reader
           .readThread({
             viewer,
+            boardTreeId,
             rootId: input.thread_id,
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           })
@@ -250,10 +281,11 @@ const make = Effect.gen(function* () {
     ),
     board_read_post: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* reader
           .readPost({
             viewer,
+            boardTreeId,
             postId: input.message_id,
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           })
@@ -261,22 +293,27 @@ const make = Effect.gen(function* () {
       }),
     ),
     board_search_posts: McpToolAccess.readsAsCaller((input) =>
-      reader
-        .search({
-          ...(input.query === undefined ? {} : { query: input.query }),
-          ...(input.channel_name === undefined ? {} : { channelName: input.channel_name }),
-          ...(input.thread_id === undefined ? {} : { rootId: input.thread_id }),
-          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-          limit: input.limit ?? 20,
-        })
-        .pipe(Effect.mapError(boardFailure("searchPosts"))),
+      Effect.gen(function* () {
+        const { boardTreeId } = yield* caller(board);
+        return yield* reader
+          .search({
+            boardTreeId,
+            ...(input.query === undefined ? {} : { query: input.query }),
+            ...(input.channel_name === undefined ? {} : { channelName: input.channel_name }),
+            ...(input.thread_id === undefined ? {} : { rootId: input.thread_id }),
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+            limit: input.limit ?? 20,
+          })
+          .pipe(Effect.mapError(boardFailure("searchPosts")));
+      }),
     ),
     board_wait: McpToolAccess.readsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const posts = yield* board
           .waitForPosts({
             viewer,
+            boardTreeId,
             rootId: input.thread_id,
             timeoutMs: input.timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS,
           })
@@ -290,13 +327,14 @@ const make = Effect.gen(function* () {
     board_post: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const author = yield* board
           .agentAuthor(viewer.threadId)
           .pipe(Effect.mapError(boardFailure("agentAuthor")));
         const result = yield* board
           .postAndNotify({
             author,
+            boardTreeId,
             destination:
               target.kind === "channel" ? target : { kind: "reply", rootId: target.rootId },
             text: input.text,
@@ -325,20 +363,20 @@ const make = Effect.gen(function* () {
     ),
     board_react: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         const active = input.remove !== true;
         yield* board
-          .react({ viewer, postId: input.message_id, emoji: input.emoji, active })
+          .react({ viewer, boardTreeId, postId: input.message_id, emoji: input.emoji, active })
           .pipe(Effect.mapError(boardFailure("react")));
         return { message_id: input.message_id, emoji: input.emoji, active };
       }),
     ),
     board_read_todos: McpToolAccess.readsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         if (input.query.type === "get")
           return yield* board
-            .getTodo({ rootId: input.thread_id, todoId: input.query.todoId, viewer })
+            .getTodo({ rootId: input.thread_id, todoId: input.query.todoId, viewer, boardTreeId })
             .pipe(
               Effect.catchTags({ MessageBoardError: (error) => Effect.succeed({ error }) }),
               Effect.mapError(boardFailure("readTodos")),
@@ -347,6 +385,7 @@ const make = Effect.gen(function* () {
           .listTodos({
             rootId: input.thread_id,
             viewer,
+            boardTreeId,
             ...(input.query.filter === undefined ? {} : { filter: input.query.filter }),
             ...(input.query.limit === undefined ? {} : { limit: input.query.limit }),
             ...(input.query.cursor === undefined ? {} : { cursor: input.query.cursor }),
@@ -359,13 +398,14 @@ const make = Effect.gen(function* () {
     ),
     board_todo_action: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        const { viewer } = yield* caller();
+        const { viewer, boardTreeId } = yield* caller(board);
         return yield* board
           .applyTodoAction({
             rootId: input.thread_id,
             requestKey: input.request_key,
             action: input.action,
             viewer,
+            boardTreeId,
           })
           .pipe(
             Effect.catchTags({ MessageBoardError: (error) => Effect.succeed({ error }) }),
@@ -375,7 +415,7 @@ const make = Effect.gen(function* () {
     ),
     board_create_todo: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        yield* caller();
+        yield* caller(board);
         return yield* board
           .createTodo({
             rootId: input.thread_id,
@@ -389,7 +429,7 @@ const make = Effect.gen(function* () {
     ),
     board_update_todo: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        yield* caller();
+        yield* caller(board);
         return yield* board
           .updateTodo({
             rootId: input.thread_id,
@@ -411,7 +451,7 @@ const make = Effect.gen(function* () {
     ),
     board_delete_todo: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
-        yield* caller();
+        yield* caller(board);
         return yield* board
           .deleteTodo({ rootId: input.thread_id, todoId: input.todo_id })
           .pipe(Effect.map(namedTodos), Effect.mapError(boardFailure("deleteTodo")));
@@ -420,17 +460,19 @@ const make = Effect.gen(function* () {
     board_subscribe: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        const viewer = yield* subscriptionViewer(input.target_thread);
-        yield* board.subscribe({ viewer, target }).pipe(Effect.mapError(boardFailure("subscribe")));
+        const { viewer, boardTreeId } = yield* subscriptionViewer(input.target_thread);
+        yield* board
+          .subscribe({ viewer, boardTreeId, target })
+          .pipe(Effect.mapError(boardFailure("subscribe")));
         return { subscribed: true, threadId: viewer.threadId };
       }),
     ),
     board_unsubscribe: McpToolAccess.actsAsCaller((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        const viewer = yield* subscriptionViewer(input.target_thread);
+        const { viewer, boardTreeId } = yield* subscriptionViewer(input.target_thread);
         yield* board
-          .unsubscribe({ viewer, target })
+          .unsubscribe({ viewer, boardTreeId, target })
           .pipe(Effect.mapError(boardFailure("unsubscribe")));
         return { subscribed: false, threadId: viewer.threadId };
       }),

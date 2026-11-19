@@ -15,6 +15,8 @@ import MessageBoardHandling from "./MessageBoardMigrations/010_MessageBoardHandl
 import MessageBoardTodoActions from "./MessageBoardMigrations/011_MessageBoardTodoActions.ts";
 import MessageBoardResponderSelection from "./MessageBoardMigrations/012_MessageBoardResponderSelection.ts";
 
+import MessageBoardAgentTrees from "./MessageBoardMigrations/013_MessageBoardAgentTrees.ts";
+
 const migrations = {
   "1_MessageBoard": MessageBoard,
   "2_MessageBoardRoles": MessageBoardRoles,
@@ -28,6 +30,7 @@ const migrations = {
   "10_MessageBoardHandling": MessageBoardHandling,
   "11_MessageBoardTodoActions": MessageBoardTodoActions,
   "12_MessageBoardResponderSelection": MessageBoardResponderSelection,
+  "13_MessageBoardAgentTrees": MessageBoardAgentTrees,
 };
 const names = Object.keys(migrations).map((key) => key.slice(key.indexOf("_") + 1));
 const table = "effect_sql_message_board_migrations";

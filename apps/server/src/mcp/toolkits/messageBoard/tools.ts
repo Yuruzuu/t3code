@@ -130,7 +130,7 @@ const summary = Schema.Struct({
 });
 
 const GetChannels = Tool.make("board_get_channels", {
-  description: "Find this environment's message board channels, with unread counts for you.",
+  description: "Find the message board channels for your agent tree, with unread counts for you.",
   parameters: Schema.Struct({ query: Schema.optional(TrimmedNonEmptyString) }),
   success: Schema.Struct({
     you: Schema.Struct({ name: Schema.String, threadId: ThreadId }),

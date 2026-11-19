@@ -92,6 +92,7 @@ const {
 } = BoardPost.fields;
 const PostRow = Schema.Struct({
   ...postFields,
+  boardTreeId: Schema.NullOr(ThreadId),
   author: Schema.fromJsonString(BoardAuthor),
   replyToId: Schema.NullOr(BoardPostId),
   mentions: Schema.NullOr(Schema.fromJsonString(Schema.Array(ThreadId))),
@@ -105,9 +106,11 @@ const {
 } = BoardChannel.fields;
 const ChannelRow = Schema.Struct({
   ...channelFields,
+  boardTreeId: Schema.NullOr(ThreadId),
   createdBy: Schema.fromJsonString(BoardAuthor),
 });
 const ThreadCursor = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   channelName: BoardChannelName,
   sort: MessageBoardListThreadsInput.fields.sort,
   time: Schema.String,
@@ -138,9 +141,14 @@ export class MessageBoardStorageError extends Schema.TaggedError<MessageBoardSto
 }
 
 type BoardFailure = MessageBoardError | MessageBoardStorageError;
+type BoardScope = { readonly boardTreeId?: ThreadId };
 type ListThreadsInput = typeof MessageBoardListThreadsInput.Type & { readonly viewer: BoardViewer };
-type SubscriptionInput = { readonly viewer: BoardViewer; readonly target: BoardSubscriptionTarget };
+type SubscriptionInput = {
+  readonly viewer: BoardViewer;
+  readonly target: BoardSubscriptionTarget;
+} & BoardScope;
 type PostInput = {
+  readonly boardTreeId?: ThreadId;
   readonly author: BoardAuthor;
   readonly destination: BoardPostDestination;
   readonly text: string;
@@ -162,30 +170,33 @@ export interface PostAndNotifyResult {
 export class MessageBoardService extends Context.Service<
   MessageBoardService,
   {
-    readonly readHandling: (input: {
-      rootId: BoardPostId;
-      viewer: BoardViewer;
-    }) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
+    readonly treeForThread: (threadId: ThreadId) => Effect.Effect<ThreadId, BoardFailure>;
+    readonly readHandling: (
+      input: {
+        rootId: BoardPostId;
+        viewer: BoardViewer;
+      } & BoardScope,
+    ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly assignLead: (
-      input: typeof MessageBoardAssignLeadInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardAssignLeadInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly updateContext: (
-      input: typeof MessageBoardUpdateContextInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardUpdateContextInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly reassignRequest: (
-      input: typeof MessageBoardReassignRequestInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardReassignRequestInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly resumeRequest: (
-      input: typeof MessageBoardResumeRequestInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardResumeRequestInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly reportOutcome: (
-      input: typeof MessageBoardReportOutcomeInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardReportOutcomeInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly closeDiscussion: (
-      input: typeof MessageBoardCloseDiscussionInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardCloseDiscussionInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly reopenDiscussion: (
-      input: typeof MessageBoardReopenDiscussionInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardReopenDiscussionInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<BoardHandlingSnapshot, BoardFailure>;
     readonly agentAuthor: (threadId: ThreadId) => Effect.Effect<BoardAuthor, BoardFailure>;
     /** An empty role clears it. */
@@ -193,44 +204,56 @@ export class MessageBoardService extends Context.Service<
       readonly threadId: ThreadId;
       readonly role: string;
     }) => Effect.Effect<void, BoardFailure>;
-    readonly listChannels: (input: {
-      readonly viewer: BoardViewer;
-      readonly query?: string;
-    }) => Effect.Effect<ReadonlyArray<BoardChannel>, BoardFailure>;
-    readonly createChannel: (input: {
-      readonly author: BoardAuthor;
-      readonly name: BoardChannelName;
-      readonly description?: string;
-    }) => Effect.Effect<BoardChannel, BoardFailure>;
+    readonly listChannels: (
+      input: {
+        readonly viewer: BoardViewer;
+        readonly query?: string;
+      } & BoardScope,
+    ) => Effect.Effect<ReadonlyArray<BoardChannel>, BoardFailure>;
+    readonly createChannel: (
+      input: {
+        readonly author: BoardAuthor;
+        readonly name: BoardChannelName;
+        readonly description?: string;
+      } & BoardScope,
+    ) => Effect.Effect<BoardChannel, BoardFailure>;
     /** Creates a channel or replaces only its description; posts and subscriptions are kept. */
-    readonly upsertChannel: (input: {
-      readonly author: BoardAuthor;
-      readonly name: BoardChannelName;
-      readonly description: string;
-    }) => Effect.Effect<BoardChannel, BoardFailure>;
+    readonly upsertChannel: (
+      input: {
+        readonly author: BoardAuthor;
+        readonly name: BoardChannelName;
+        readonly description: string;
+      } & BoardScope,
+    ) => Effect.Effect<BoardChannel, BoardFailure>;
     readonly listThreads: (
       input: ListThreadsInput,
     ) => Effect.Effect<MessageBoardListThreadsResult, BoardFailure>;
-    readonly readThread: (input: {
-      readonly viewer: BoardViewer;
-      readonly rootId: BoardPostId;
-      readonly limit?: number;
-      readonly cursor?: string;
-    }) => Effect.Effect<BoardThreadDetail, BoardFailure>;
+    readonly readThread: (
+      input: {
+        readonly viewer: BoardViewer;
+        readonly rootId: BoardPostId;
+        readonly limit?: number;
+        readonly cursor?: string;
+      } & BoardScope,
+    ) => Effect.Effect<BoardThreadDetail, BoardFailure>;
     /** Discussions an agent posted in or is subscribed to, most recently active first. */
     readonly listAgentThreads: (input: {
       readonly viewer: BoardViewer;
       readonly threadId: ThreadId;
     }) => Effect.Effect<ReadonlyArray<BoardThreadSummary>, BoardFailure>;
-    readonly readPost: (input: {
-      readonly postId: BoardPostId;
-    }) => Effect.Effect<BoardPost, BoardFailure>;
-    readonly searchPosts: (input: {
-      readonly viewer: BoardViewer;
-      readonly query?: string;
-      readonly channelName?: BoardChannelName;
-      readonly limit?: number;
-    }) => Effect.Effect<ReadonlyArray<BoardPost>, BoardFailure>;
+    readonly readPost: (
+      input: {
+        readonly postId: BoardPostId;
+      } & BoardScope,
+    ) => Effect.Effect<BoardPost, BoardFailure>;
+    readonly searchPosts: (
+      input: {
+        readonly viewer: BoardViewer;
+        readonly query?: string;
+        readonly channelName?: BoardChannelName;
+        readonly limit?: number;
+      } & BoardScope,
+    ) => Effect.Effect<ReadonlyArray<BoardPost>, BoardFailure>;
     /** Stores a post silently, resolving selected identities and unambiguous persona names. */
     readonly post: (input: PostInput) => Effect.Effect<BoardPost, BoardFailure>;
     /** Agent notices target active runs. User requests use durable dispatch. */
@@ -238,13 +261,13 @@ export class MessageBoardService extends Context.Service<
       input: PostInput & { readonly notifyThreads?: ReadonlyArray<ThreadId> },
     ) => Effect.Effect<PostAndNotifyResult, BoardFailure>;
     readonly applyTodoAction: (
-      input: typeof MessageBoardTodoActionInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardTodoActionInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<MessageBoardTodoActionResult, BoardFailure>;
     readonly listTodos: (
-      input: typeof MessageBoardListTodosInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardListTodosInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<typeof MessageBoardListTodosResult.Type, BoardFailure>;
     readonly getTodo: (
-      input: typeof MessageBoardGetTodoInput.Type & { viewer: BoardViewer },
+      input: typeof MessageBoardGetTodoInput.Type & { viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<typeof MessageBoardGetTodoResult.Type, BoardFailure>;
     readonly createTodo: (
       input: typeof MessageBoardCreateTodoInput.Type,
@@ -256,31 +279,34 @@ export class MessageBoardService extends Context.Service<
       input: typeof MessageBoardDeleteTodoInput.Type,
     ) => Effect.Effect<MessageBoardTodosResult, BoardFailure>;
     readonly react: (
-      input: typeof MessageBoardReactInput.Type & { readonly viewer: BoardViewer },
+      input: typeof MessageBoardReactInput.Type & { readonly viewer: BoardViewer } & BoardScope,
     ) => Effect.Effect<void, BoardFailure>;
     /** Marks a whole channel, or one discussion (`rootId`), read for the viewer. */
     readonly markRead: (
       input: {
         readonly viewer: BoardViewer;
         readonly throughPostId?: BoardPostId;
-      } & MessageBoardMarkReadInput,
+      } & MessageBoardMarkReadInput &
+        BoardScope,
     ) => Effect.Effect<void, BoardFailure>;
     /**
      * The viewer's unread posts by others in one discussion. With none, waits up to `timeoutMs`
      * for the next one; empty when it times out.
      */
-    readonly waitForPosts: (input: {
-      readonly viewer: BoardViewer;
-      readonly rootId: BoardPostId;
-      readonly timeoutMs: number;
-    }) => Effect.Effect<ReadonlyArray<BoardPost>, BoardFailure>;
+    readonly waitForPosts: (
+      input: {
+        readonly viewer: BoardViewer;
+        readonly rootId: BoardPostId;
+        readonly timeoutMs: number;
+      } & BoardScope,
+    ) => Effect.Effect<ReadonlyArray<BoardPost>, BoardFailure>;
     /** `implicit` subscribes by participation and keeps an earlier unsubscribe. */
     readonly subscribe: (
       input: SubscriptionInput & { readonly implicit?: boolean },
     ) => Effect.Effect<void, BoardFailure>;
     readonly unsubscribe: (input: SubscriptionInput) => Effect.Effect<void, BoardFailure>;
     readonly listSubscribers: (
-      target: BoardSubscriptionTarget,
+      target: BoardSubscriptionTarget & BoardScope,
     ) => Effect.Effect<ReadonlyArray<BoardViewer>, BoardFailure>;
     readonly events: Stream.Stream<BoardEvent>;
   }
@@ -296,9 +322,11 @@ const toPost = ({
   mentions,
   workedMs,
   runId: _runId,
+  boardTreeId,
   ...post
 }: typeof PostRow.Type): BoardPost => ({
   ...post,
+  ...(boardTreeId === null ? {} : { boardTreeId }),
   ...(replyToId === null ? {} : { replyToId }),
   ...(mentions === null || mentions.length === 0 ? {} : { mentions }),
   ...(workedMs === null ? {} : { workedMs: Math.max(0, Math.round(workedMs)) }),
@@ -367,8 +395,11 @@ export function resolveMentions(
     ),
   ];
 }
-const targetKey = (target: BoardSubscriptionTarget) =>
-  target.kind === "channel" ? target.channelName : target.rootId;
+// The stored key also identifies channel subscriptions and read markers.
+export const boardChannelKey = (name: string, boardTreeId?: ThreadId) =>
+  boardTreeId === undefined ? name : `${encodeURIComponent(boardTreeId)}/${name}`;
+const targetKey = (target: BoardSubscriptionTarget, boardTreeId?: ThreadId) =>
+  target.kind === "channel" ? boardChannelKey(target.channelName, boardTreeId) : target.rootId;
 const invalidInput = () =>
   new MessageBoardError({ code: "invalid_input", message: "Invalid message board input." });
 const notFound = () =>
@@ -449,7 +480,7 @@ const make = Effect.gen(function* () {
   // case is one extra notice, which doesn't justify storing it.
   const pendingNotices = new Map<string, { runId: RunId; createdAt: string }>();
   const postColumns = sql.literal(
-    `id, channel_name AS "channelName", root_id AS "rootId", author_json AS author, text, created_at AS "createdAt", reply_to_id AS "replyToId", mentions_json AS mentions, worked_ms AS "workedMs", run_id AS "runId"`,
+    `id, substr(channel_name, instr(channel_name, '/') + 1) AS "channelName", (SELECT board_tree_id FROM board_channels WHERE name = channel_name) AS "boardTreeId", root_id AS "rootId", author_json AS author, text, created_at AS "createdAt", reply_to_id AS "replyToId", mentions_json AS mentions, worked_ms AS "workedMs", run_id AS "runId"`,
   );
   const handlingEvents = yield* Effect.serviceOption(
     MessageBoardHandlingEvents.MessageBoardHandlingEvents,
@@ -482,6 +513,34 @@ const make = Effect.gen(function* () {
         ? cause
         : new MessageBoardStorageError({ operation, cause }),
     );
+  const treeForThread: MessageBoardService["Service"]["treeForThread"] = Effect.fn(
+    "MessageBoardService.treeForThread",
+  )(function* (threadId) {
+    const visited = new Set<ThreadId>();
+    let current = threadId;
+    while (!visited.has(current)) {
+      visited.add(current);
+      const thread = yield* projections.getThreadShell(current);
+      if (thread === null) return yield* notFound();
+      const { lineage } = thread;
+      if (lineage.relationshipToParent !== "subagent" || lineage.parentThreadId === null)
+        return current;
+      current = lineage.parentThreadId;
+    }
+    return yield* notFound();
+  }, storage("treeForThread"));
+
+  const belongsToTree = Effect.fn("MessageBoardService.belongsToTree")(function* (
+    threadId: ThreadId,
+    boardTreeId: ThreadId | undefined,
+  ) {
+    if (boardTreeId === undefined) return true;
+    return yield* treeForThread(threadId).pipe(
+      Effect.map((treeId) => treeId === boardTreeId),
+      Effect.orElseSucceed(() => false),
+    );
+  });
+
   const agentAuthor: MessageBoardService["Service"]["agentAuthor"] = Effect.fn(
     "MessageBoardService.agentAuthor",
   )(function* (threadId) {
@@ -517,7 +576,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const query = input.query?.trim() ?? "";
     const rows = yield* sql`
-      SELECT c.name, c.description, c.created_by_json AS "createdBy", c.created_at AS "createdAt",
+      SELECT substr(c.name, instr(c.name, '/') + 1) AS name, c.board_tree_id AS "boardTreeId", c.description, c.created_by_json AS "createdBy", c.created_at AS "createdAt",
         COALESCE(MAX(p.created_at), c.created_at) AS "lastActivityAt",
         COUNT(CASE WHEN p.id = p.root_id THEN 1 END) AS "threadCount",
         COUNT(p.id) AS "postCount",
@@ -526,7 +585,9 @@ const make = Effect.gen(function* () {
       LEFT JOIN board_posts p ON p.channel_name = c.name
       LEFT JOIN board_read_markers m ON m.channel_name = c.name AND m.viewer_key = ${viewerKey(input.viewer)}
       LEFT JOIN board_thread_read_markers t ON t.root_id = p.root_id AND t.viewer_key = ${viewerKey(input.viewer)}
-      WHERE ${query === "" ? sql`1` : sql`instr(lower(c.name), lower(${query})) > 0 OR instr(lower(COALESCE(c.description, '')), lower(${query})) > 0`}
+      WHERE (${input.boardTreeId ?? null} IS NULL OR c.board_tree_id = ${input.boardTreeId ?? null})
+        AND (${query} = '' OR instr(lower(substr(c.name, instr(c.name, '/') + 1)), lower(${query})) > 0
+          OR instr(lower(COALESCE(c.description, '')), lower(${query})) > 0)
       GROUP BY c.name
       ORDER BY "lastActivityAt" DESC, c.name ASC
     `;
@@ -540,30 +601,44 @@ const make = Effect.gen(function* () {
         ) AS rank
         FROM board_posts p WHERE ${sql.in(
           "p.channel_name",
-          channels.map((channel) => channel.name),
+          channels.map((channel) =>
+            boardChannelKey(channel.name, channel.boardTreeId ?? undefined),
+          ),
         )}
       )
       WHERE rank <= 12
       ORDER BY "createdAt" DESC, id DESC
     `;
-    const recent = Map.groupBy(yield* decodePosts(recentRows), (post) => post.channelName);
-    return channels.map((channel): BoardChannel => {
-      const posts = recent.get(channel.name) ?? [];
+    const recent = Map.groupBy(yield* decodePosts(recentRows), (post) =>
+      boardChannelKey(post.channelName, post.boardTreeId),
+    );
+    return channels.map(({ boardTreeId, ...channel }): BoardChannel => {
+      const posts = recent.get(boardChannelKey(channel.name, boardTreeId ?? undefined)) ?? [];
       const authors = new Map<string, BoardAuthor>();
       for (const post of posts) {
         if (post.author.kind === "system") continue;
         const key = post.author.kind === "user" ? "user" : post.author.threadId;
         if (!authors.has(key) && authors.size < 5) authors.set(key, post.author);
       }
-      return { ...channel, latestPost: posts[0] ?? null, recentAuthors: [...authors.values()] };
+      return {
+        ...channel,
+        ...(boardTreeId === null ? {} : { boardTreeId }),
+        latestPost: posts[0] ?? null,
+        recentAuthors: [...authors.values()],
+      };
     });
   }, storage("listChannels"));
 
   const channelForUser = Effect.fn("MessageBoardService.channelForUser")(function* (
     name: BoardChannelName,
+    boardTreeId?: ThreadId,
   ) {
-    const channels = yield* listChannels({ viewer: { kind: "user" }, query: name });
-    const channel = channels.find((item) => item.name === name);
+    const channels = yield* listChannels({
+      viewer: { kind: "user" },
+      query: name,
+      ...(boardTreeId === undefined ? {} : { boardTreeId }),
+    });
+    const channel = channels.find((item) => item.name === name && item.boardTreeId === boardTreeId);
     if (!channel) return yield* notFound();
     return channel;
   });
@@ -573,6 +648,7 @@ const make = Effect.gen(function* () {
   )(
     function* (input) {
       const decoded = yield* decodeCreateChannel(input).pipe(Effect.mapError(invalidInput));
+      const channelKey = boardChannelKey(decoded.name, input.boardTreeId);
       const author = yield* decodeAuthor(input.author).pipe(Effect.mapError(invalidInput));
       if (author.kind === "system") return yield* invalidInput();
       const authorJson = yield* encodeAuthor(author);
@@ -585,7 +661,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const existing = yield* sql<{
             description: string | null;
-          }>`SELECT description FROM board_channels WHERE name = ${decoded.name}`;
+          }>`SELECT description FROM board_channels WHERE name = ${channelKey}`;
           if (
             existing[0] &&
             decoded.description !== undefined &&
@@ -598,10 +674,10 @@ const make = Effect.gen(function* () {
           }
           if (!existing[0]) {
             const createdAt = yield* timestamp;
-            yield* sql`INSERT INTO board_channels (name, description, created_by_json, created_at)
-          VALUES (${decoded.name}, ${decoded.description ?? null}, ${authorJson}, ${createdAt})`;
+            yield* sql`INSERT INTO board_channels (name, board_tree_id, description, created_by_json, created_at)
+          VALUES (${channelKey}, ${input.boardTreeId ?? null}, ${decoded.description ?? null}, ${authorJson}, ${createdAt})`;
           }
-          return yield* channelForUser(decoded.name);
+          return yield* channelForUser(decoded.name, input.boardTreeId);
         }),
       );
       yield* PubSub.publish(changes, { type: "channel-upserted", channel });
@@ -616,6 +692,7 @@ const make = Effect.gen(function* () {
   )(
     function* (input) {
       const decoded = yield* decodeCreateChannel(input).pipe(Effect.mapError(invalidInput));
+      const channelKey = boardChannelKey(decoded.name, input.boardTreeId);
       const author = yield* decodeAuthor(input.author).pipe(Effect.mapError(invalidInput));
       const authorJson = yield* encodeAuthor(author);
       if (new TextEncoder().encode(input.description).length > BOARD_CHANNEL_DESCRIPTION_MAX_BYTES)
@@ -623,10 +700,10 @@ const make = Effect.gen(function* () {
       const channel = yield* sql.withTransaction(
         Effect.gen(function* () {
           const createdAt = yield* timestamp;
-          yield* sql`INSERT INTO board_channels (name, description, created_by_json, created_at)
-          VALUES (${decoded.name}, ${input.description}, ${authorJson}, ${createdAt})
+          yield* sql`INSERT INTO board_channels (name, board_tree_id, description, created_by_json, created_at)
+          VALUES (${channelKey}, ${input.boardTreeId ?? null}, ${input.description}, ${authorJson}, ${createdAt})
           ON CONFLICT (name) DO UPDATE SET description = excluded.description`;
-          return yield* channelForUser(decoded.name);
+          return yield* channelForUser(decoded.name, input.boardTreeId);
         }),
       );
       yield* PubSub.publish(changes, { type: "channel-upserted", channel });
@@ -638,15 +715,28 @@ const make = Effect.gen(function* () {
 
   const readPost: MessageBoardService["Service"]["readPost"] = Effect.fn(
     "MessageBoardService.readPost",
-  )(function* ({ postId }) {
+  )(function* ({ postId, boardTreeId }) {
     const rows = yield* sql`SELECT ${postColumns}
-      FROM board_posts WHERE id = ${postId}`;
+      FROM board_posts WHERE id = ${postId}
+        AND (${boardTreeId ?? null} IS NULL OR channel_name IN (SELECT name FROM board_channels WHERE board_tree_id = ${boardTreeId ?? null}))`;
     const posts = yield* decodePosts(rows);
     if (!posts[0]) return yield* notFound();
     return posts[0];
   }, storage("readPost"));
 
   /** Per discussion, the later of the channel-wide and the discussion's own read marker. */
+  const requireDiscussionScope = Effect.fn("MessageBoardService.requireDiscussionScope")(function* (
+    rootId: BoardPostId,
+    boardTreeId: ThreadId | undefined,
+  ) {
+    const root = yield* readPost({
+      postId: rootId,
+      ...(boardTreeId === undefined ? {} : { boardTreeId }),
+    });
+    if (root.id !== root.rootId) return yield* notFound();
+    return root;
+  });
+
   const readMarkers = Effect.fn("MessageBoardService.readMarkers")(function* (
     viewer: BoardViewer,
     rootIds: ReadonlyArray<BoardPostId>,
@@ -778,6 +868,13 @@ const make = Effect.gen(function* () {
     "MessageBoardService.applyTodoAction",
   )(
     function* (input) {
+      const root = yield* requireDiscussionScope(input.rootId, input.boardTreeId);
+      if (
+        "assigneeThreadId" in input.action &&
+        input.action.assigneeThreadId != null &&
+        !(yield* belongsToTree(input.action.assigneeThreadId, root.boardTreeId))
+      )
+        return yield* notFound();
       const { result, changed } = yield* todoStore.apply(input);
       if (changed)
         yield* PubSub.publish(changes, {
@@ -793,11 +890,15 @@ const make = Effect.gen(function* () {
   const listTodos: MessageBoardService["Service"]["listTodos"] = Effect.fn(
     "MessageBoardService.listTodos",
   )(function* (input) {
+    if (input.boardTreeId !== undefined)
+      yield* requireDiscussionScope(input.rootId, input.boardTreeId);
     return yield* todoStore.list(input);
   }, storage("listTodos"));
   const getTodo: MessageBoardService["Service"]["getTodo"] = Effect.fn(
     "MessageBoardService.getTodo",
   )(function* (input) {
+    if (input.boardTreeId !== undefined)
+      yield* requireDiscussionScope(input.rootId, input.boardTreeId);
     return yield* todoStore.get(input);
   }, storage("getTodo"));
   const refreshTodoTools = () =>
@@ -827,6 +928,8 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const { viewer } = input;
     const decoded = yield* decodeReadThread(input).pipe(Effect.mapError(invalidInput));
+    if (input.boardTreeId !== undefined)
+      yield* requireDiscussionScope(decoded.rootId, input.boardTreeId);
     const { rootId } = decoded;
     const paged = decoded.limit !== undefined || decoded.cursor !== undefined;
     let rows: ReadonlyArray<typeof PostRow.Type>;
@@ -1037,11 +1140,19 @@ const make = Effect.gen(function* () {
       decoded.cursor === undefined
         ? null
         : yield* decodeCursor(decoded.cursor).pipe(Effect.mapError(invalidInput));
-    if (cursor && (cursor.channelName !== decoded.channelName || cursor.sort !== decoded.sort))
+    if (
+      cursor &&
+      (cursor.channelName !== decoded.channelName ||
+        cursor.sort !== decoded.sort ||
+        cursor.boardTreeId !== input.boardTreeId)
+    )
       return yield* invalidInput();
+    const channelKey = boardChannelKey(decoded.channelName, input.boardTreeId);
     const snapshot =
       cursor?.snapshot ??
-      (yield* sql<{ time: string | null }>`SELECT MAX(created_at) AS time FROM board_posts`)[0]
+      (yield* sql<{
+        time: string | null;
+      }>`SELECT MAX(created_at) AS time FROM board_posts WHERE channel_name = ${channelKey}`)[0]
         ?.time ??
       "";
     const sortColumn = decoded.sort === "activity" ? sql`activity_at` : sql`created_at`;
@@ -1054,7 +1165,7 @@ const make = Effect.gen(function* () {
       SELECT * FROM (
         SELECT r.id, r.created_at, MAX(p.created_at) AS activity_at, COUNT(p.id) AS post_count
         FROM board_posts r JOIN board_posts p ON p.root_id = r.id
-        WHERE r.channel_name = ${decoded.channelName} AND r.id = r.root_id AND p.created_at <= ${snapshot}
+        WHERE r.channel_name = ${channelKey} AND r.id = r.root_id AND p.created_at <= ${snapshot}
         GROUP BY r.id
       )
       WHERE ${cursor === null ? sql`1` : sql`(${sortColumn} < ${cursor.time} OR (${sortColumn} = ${cursor.time} AND id < ${cursor.id}))`}
@@ -1093,6 +1204,7 @@ const make = Effect.gen(function* () {
     const nextCursor =
       roots.length > limit
         ? yield* encodeCursor({
+            ...(input.boardTreeId === undefined ? {} : { boardTreeId: input.boardTreeId }),
             channelName: decoded.channelName,
             sort: decoded.sort,
             id: BoardPostId.make(last.id),
@@ -1149,7 +1261,8 @@ const make = Effect.gen(function* () {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) return yield* invalidInput();
     const query = input.query?.trim() ?? "";
     const rows = yield* sql`SELECT ${postColumns}
-      FROM board_posts WHERE ${input.channelName === undefined ? sql`1` : sql`channel_name = ${input.channelName}`}
+      FROM board_posts WHERE (${input.boardTreeId ?? null} IS NULL OR channel_name IN (SELECT name FROM board_channels WHERE board_tree_id = ${input.boardTreeId ?? null}))
+        AND ${input.channelName === undefined ? sql`1` : sql`channel_name = ${boardChannelKey(input.channelName, input.boardTreeId)}`}
       AND instr(lower(text), lower(${query})) > 0 ORDER BY created_at DESC, id DESC LIMIT ${limit}`;
     return yield* decodePosts(rows);
   }, storage("searchPosts"));
@@ -1160,7 +1273,16 @@ const make = Effect.gen(function* () {
       const author = yield* decodeAuthor(input.author).pipe(Effect.mapError(invalidInput));
       if (author.kind === "system") return yield* invalidInput();
       const authorJson = yield* encodeAuthor(author);
-      const authorKey = author.kind === "user" ? "user" : `thread:${author.threadId}`;
+      const boardTreeId =
+        input.boardTreeId ??
+        (decoded.destination.kind === "reply"
+          ? (yield* requireDiscussionScope(decoded.destination.rootId, undefined)).boardTreeId
+          : undefined);
+      const scope = boardTreeId === undefined ? {} : { boardTreeId };
+      if (author.kind === "agent" && !(yield* belongsToTree(author.threadId, boardTreeId)))
+        return yield* notFound();
+      const authorKey =
+        author.kind === "user" ? boardChannelKey("user", boardTreeId) : `thread:${author.threadId}`;
       const fingerprint =
         decoded.requestKey === undefined
           ? null
@@ -1200,7 +1322,7 @@ const make = Effect.gen(function* () {
                   message: "This request key already belongs to a different board post payload.",
                 });
               return {
-                value: yield* readPost({ postId: BoardPostId.make(previous[0].post_id) }),
+                value: yield* readPost({ postId: BoardPostId.make(previous[0].post_id), ...scope }),
                 channel: null,
                 replayed: true,
               };
@@ -1211,8 +1333,7 @@ const make = Effect.gen(function* () {
           let channelName: BoardChannelName;
           let rootId: BoardPostId;
           if (decoded.destination.kind === "reply") {
-            const root = yield* readPost({ postId: decoded.destination.rootId });
-            if (root.rootId !== root.id) return yield* notFound();
+            const root = yield* requireDiscussionScope(decoded.destination.rootId, boardTreeId);
             channelName = root.channelName;
             rootId = root.id;
             const state = yield* handling.snapshot(rootId);
@@ -1227,28 +1348,30 @@ const make = Effect.gen(function* () {
             } else if (state.lifecycle === "closed" && decoded.mode !== "note")
               return yield* handling.conflict(state, "closed");
             if (decoded.replyToId !== undefined) {
-              const target = yield* readPost({ postId: decoded.replyToId });
+              const target = yield* readPost({ postId: decoded.replyToId, ...scope });
               if (target.rootId !== rootId) return yield* invalidInput();
             }
           } else {
             if (decoded.replyToId !== undefined) return yield* invalidInput();
             channelName = decoded.destination.channelName;
             rootId = id;
-            yield* sql`INSERT INTO board_channels (name, description, created_by_json, created_at)
-          VALUES (${channelName}, NULL, ${authorJson}, ${createdAt}) ON CONFLICT (name) DO NOTHING`;
+            yield* sql`INSERT INTO board_channels (name, board_tree_id, description, created_by_json, created_at)
+          VALUES (${boardChannelKey(channelName, boardTreeId)}, ${boardTreeId ?? null}, NULL, ${authorJson}, ${createdAt}) ON CONFLICT (name) DO NOTHING`;
           }
+          const channelKey = boardChannelKey(channelName, boardTreeId);
           const candidates = yield* sql<{ thread_id: string }>`
             SELECT DISTINCT json_extract(author_json, '$.threadId') AS thread_id FROM board_posts
-            WHERE channel_name = ${channelName} AND json_extract(author_json, '$.kind') = 'agent'
+            WHERE channel_name = ${channelKey} AND json_extract(author_json, '$.kind') = 'agent'
             UNION SELECT substr(viewer_key, 8) FROM board_subscriptions
             WHERE viewer_key LIKE 'thread:%' AND enabled = 1
-              AND ((target_kind = 'channel' AND target = ${channelName})
+              AND ((target_kind = 'channel' AND target = ${channelKey})
                 OR (target_kind = 'thread' AND target = ${rootId}))`;
           const identities = new Set(candidates.map((row) => ThreadId.make(row.thread_id)));
           for (const mention of collectBoardMentions(decoded.text)) {
             if (mention.threadId === undefined) continue;
             const threadId = ThreadId.make(mention.threadId);
-            if (identities.has(threadId)) continue;
+            if (identities.has(threadId) || !(yield* belongsToTree(threadId, boardTreeId)))
+              continue;
             identities.add(threadId);
           }
           const mentions = resolveMentions(
@@ -1271,14 +1394,16 @@ const make = Effect.gen(function* () {
             workedMs = Math.max(0, Date.parse(createdAt) - since);
           }
           yield* sql`INSERT INTO board_posts (id, channel_name, root_id, author_json, text, created_at, reply_to_id, mentions_json, worked_ms, run_id)
-        VALUES (${id}, ${channelName}, ${rootId}, ${authorJson}, ${decoded.text}, ${createdAt},
+        VALUES (${id}, ${channelKey}, ${rootId}, ${authorJson}, ${decoded.text}, ${createdAt},
           ${decoded.replyToId ?? null}, ${mentionsJson}, ${workedMs}, ${shell?.activeRunId ?? null})`;
           if (decoded.requestKey !== undefined)
             yield* sql`INSERT INTO board_post_requests (author_key, request_key, fingerprint, post_id)
             VALUES (${authorKey}, ${decoded.requestKey}, ${fingerprint!}, ${id})`;
           const requested = new Set<ThreadId>();
           if (author.kind === "user" && decoded.mode !== "note") {
-            for (const threadId of [...mentions, ...(notifyThreads ?? [])]) requested.add(threadId);
+            for (const threadId of [...mentions, ...(notifyThreads ?? [])]) {
+              if (yield* belongsToTree(threadId, boardTreeId)) requested.add(threadId);
+            }
             if (decoded.replyToId !== undefined) {
               const replied = yield* readPost({ postId: decoded.replyToId });
               if (replied.author.kind === "agent") requested.add(replied.author.threadId);
@@ -1321,7 +1446,7 @@ const make = Effect.gen(function* () {
               ]);
             }
           const value = yield* readPost({ postId: id });
-          const channel = yield* channelForUser(channelName);
+          const channel = yield* channelForUser(channelName, boardTreeId);
           return { value, channel, replayed: false };
         }),
       );
@@ -1369,18 +1494,20 @@ const make = Effect.gen(function* () {
         coalescedThreads: [],
         notificationFailed: false,
       };
-    const { author } = saved;
+    const { author, boardTreeId } = saved;
+    const scope = boardTreeId === undefined ? {} : { boardTreeId };
     if (author.kind === "system") return yield* invalidInput();
     if (author.kind === "agent") {
       yield* subscribe({
         viewer: { kind: "thread", threadId: author.threadId },
         target: { kind: "thread", rootId: saved.rootId },
         implicit: true,
+        ...scope,
       });
     }
     const subscribers = yield* listSubscribers(
       saved.id === saved.rootId
-        ? { kind: "channel", channelName: saved.channelName }
+        ? { kind: "channel", channelName: saved.channelName, ...scope }
         : { kind: "thread", rootId: saved.rootId },
     ).pipe(Effect.result);
     const mentioned = new Set(saved.mentions ?? []);
@@ -1408,6 +1535,10 @@ const make = Effect.gen(function* () {
     const skippedThreads: Array<ThreadId> = [];
     const coalescedThreads: Array<ThreadId> = [];
     for (const threadId of recipients) {
+      if (!(yield* belongsToTree(threadId, boardTreeId))) {
+        skippedThreads.push(threadId);
+        continue;
+      }
       if (author.kind === "user") {
         if (
           input.mode !== "note" &&
@@ -1473,7 +1604,10 @@ const make = Effect.gen(function* () {
   const react: MessageBoardService["Service"]["react"] = Effect.fn("MessageBoardService.react")(
     function* (input) {
       const decoded = yield* decodeReact(input).pipe(Effect.mapError(invalidInput));
-      const target = yield* readPost({ postId: decoded.postId });
+      const target = yield* readPost({
+        postId: decoded.postId,
+        ...(input.boardTreeId === undefined ? {} : { boardTreeId: input.boardTreeId }),
+      });
       const key = viewerKey(input.viewer);
       if (decoded.active) {
         const now = yield* timestamp;
@@ -1499,37 +1633,42 @@ const make = Effect.gen(function* () {
     "MessageBoardService.markRead",
   )(
     function* (input) {
-      const { viewer } = input;
+      const { viewer, boardTreeId } = input;
       const through =
         input.throughPostId === undefined ? null : yield* readPost({ postId: input.throughPostId });
       if (through !== null && (!("rootId" in input) || through.rootId !== input.rootId))
         return yield* invalidInput();
       const readAt = through?.createdAt ?? (yield* timestamp);
       if ("rootId" in input) {
-        const root = yield* readPost({ postId: input.rootId });
-        if (root.rootId !== root.id) return yield* notFound();
+        const root = yield* requireDiscussionScope(input.rootId, boardTreeId);
         yield* sql`INSERT INTO board_thread_read_markers (viewer_key, root_id, read_at) VALUES (${viewerKey(viewer)}, ${root.id}, ${readAt})
         ON CONFLICT (viewer_key, root_id) DO UPDATE SET read_at = MAX(read_at, excluded.read_at)`;
         if (viewer.kind === "thread") return yield* publishMember(root.id, viewer.threadId);
         yield* PubSub.publish(changes, {
           type: "read-marker-updated",
           channelName: root.channelName,
+          ...(root.boardTreeId === undefined ? {} : { boardTreeId: root.boardTreeId }),
           rootId: root.id,
           readAt,
         });
         // A discussion read lowers the channel's count by an amount only the server knows.
         yield* PubSub.publish(changes, {
           type: "channel-upserted",
-          channel: yield* channelForUser(root.channelName),
+          channel: yield* channelForUser(root.channelName, root.boardTreeId),
         });
         return;
       }
       const { channelName } = input;
-      yield* channelForUser(channelName);
-      yield* sql`INSERT INTO board_read_markers (viewer_key, channel_name, read_at) VALUES (${viewerKey(viewer)}, ${channelName}, ${readAt})
+      yield* channelForUser(channelName, boardTreeId);
+      yield* sql`INSERT INTO board_read_markers (viewer_key, channel_name, read_at) VALUES (${viewerKey(viewer)}, ${boardChannelKey(channelName, boardTreeId)}, ${readAt})
       ON CONFLICT (viewer_key, channel_name) DO UPDATE SET read_at = excluded.read_at`;
       if (viewer.kind === "user")
-        yield* PubSub.publish(changes, { type: "read-marker-updated", channelName, readAt });
+        yield* PubSub.publish(changes, {
+          type: "read-marker-updated",
+          channelName,
+          readAt,
+          ...(boardTreeId === undefined ? {} : { boardTreeId }),
+        });
     },
     writes.withPermit,
     storage("markRead"),
@@ -1541,16 +1680,18 @@ const make = Effect.gen(function* () {
     const target = yield* decodeSubscriptionTarget(input.target).pipe(
       Effect.mapError(invalidInput),
     );
-    if (target.kind === "channel") yield* channelForUser(target.channelName);
-    else {
-      const root = yield* readPost({ postId: target.rootId });
-      if (root.rootId !== root.id) return yield* notFound();
-    }
+    if (target.kind === "channel") yield* channelForUser(target.channelName, input.boardTreeId);
+    else yield* requireDiscussionScope(target.rootId, input.boardTreeId);
+    if (
+      input.viewer.kind === "thread" &&
+      !(yield* belongsToTree(input.viewer.threadId, input.boardTreeId))
+    )
+      return yield* notFound();
     yield* input.implicit
       ? sql`INSERT INTO board_subscriptions (viewer_key, target_kind, target)
-        VALUES (${viewerKey(input.viewer)}, ${target.kind}, ${targetKey(target)}) ON CONFLICT DO NOTHING`
+        VALUES (${viewerKey(input.viewer)}, ${target.kind}, ${targetKey(target, input.boardTreeId)}) ON CONFLICT DO NOTHING`
       : sql`INSERT INTO board_subscriptions (viewer_key, target_kind, target, enabled)
-        VALUES (${viewerKey(input.viewer)}, ${target.kind}, ${targetKey(target)}, 1)
+        VALUES (${viewerKey(input.viewer)}, ${target.kind}, ${targetKey(target, input.boardTreeId)}, 1)
         ON CONFLICT DO UPDATE SET enabled = 1`;
     if (target.kind === "thread" && input.viewer.kind === "thread")
       yield* publishMember(target.rootId, input.viewer.threadId);
@@ -1559,8 +1700,16 @@ const make = Effect.gen(function* () {
   const unsubscribe: MessageBoardService["Service"]["unsubscribe"] = Effect.fn(
     "MessageBoardService.unsubscribe",
   )(function* (input) {
+    if (input.target.kind === "channel")
+      yield* channelForUser(input.target.channelName, input.boardTreeId);
+    else yield* requireDiscussionScope(input.target.rootId, input.boardTreeId);
+    if (
+      input.viewer.kind === "thread" &&
+      !(yield* belongsToTree(input.viewer.threadId, input.boardTreeId))
+    )
+      return yield* notFound();
     yield* sql`INSERT INTO board_subscriptions (viewer_key, target_kind, target, enabled)
-      VALUES (${viewerKey(input.viewer)}, ${input.target.kind}, ${targetKey(input.target)}, 0)
+      VALUES (${viewerKey(input.viewer)}, ${input.target.kind}, ${targetKey(input.target, input.boardTreeId)}, 0)
       ON CONFLICT DO UPDATE SET enabled = 0`;
     if (input.target.kind === "thread" && input.viewer.kind === "thread")
       yield* publishMember(input.target.rootId, input.viewer.threadId);
@@ -1570,7 +1719,7 @@ const make = Effect.gen(function* () {
     "MessageBoardService.listSubscribers",
   )(function* (target) {
     const rows = yield* sql<{ viewer_key: string }>`SELECT viewer_key FROM board_subscriptions
-      WHERE target_kind = ${target.kind} AND target = ${targetKey(target)} AND enabled = 1
+      WHERE target_kind = ${target.kind} AND target = ${targetKey(target, target.boardTreeId)} AND enabled = 1
       ORDER BY viewer_key`;
     return yield* decodeViewers(
       rows.map((row) =>
@@ -1583,7 +1732,7 @@ const make = Effect.gen(function* () {
 
   const waitForPosts: MessageBoardService["Service"]["waitForPosts"] = Effect.fn(
     "MessageBoardService.waitForPosts",
-  )(function* ({ viewer, rootId, timeoutMs }) {
+  )(function* ({ viewer, rootId, timeoutMs, boardTreeId }) {
     const key = viewerKey(viewer);
     const fromOthers = (post: BoardPost) =>
       post.author.kind === "system" ||
@@ -1596,9 +1745,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         // Subscribe before reading, so a post landing in between still ends the wait.
         const subscription = yield* PubSub.subscribe(changes);
-        const root =
-          yield* sql`SELECT 1 FROM board_posts WHERE id = ${rootId} AND root_id = ${rootId}`;
-        if (root.length === 0) return yield* notFound();
+        yield* requireDiscussionScope(rootId, boardTreeId);
         const readAt = (yield* readMarkers(viewer, [rootId]))(rootId) ?? "";
         const unread = (yield* decodePostRows(
           yield* sql`SELECT ${postColumns} FROM board_posts
@@ -1626,7 +1773,10 @@ const make = Effect.gen(function* () {
 
   const readHandling: MessageBoardService["Service"]["readHandling"] = Effect.fn(
     "MessageBoardService.readHandling",
-  )(({ rootId }) => handling.snapshot(rootId), storage("readHandling"));
+  )(function* ({ rootId, boardTreeId }) {
+    if (boardTreeId !== undefined) yield* requireDiscussionScope(rootId, boardTreeId);
+    return yield* handling.snapshot(rootId);
+  }, storage("readHandling"));
   const publishHandling = Effect.fn("MessageBoardService.publishHandling")(function* (
     state: BoardHandlingSnapshot,
   ) {
@@ -1637,6 +1787,7 @@ const make = Effect.gen(function* () {
     "MessageBoardService.assignLead",
   )(
     function* (input) {
+      const root = yield* requireDiscussionScope(input.rootId, input.boardTreeId);
       const state = yield* sql.withTransaction(
         Effect.gen(function* () {
           const current = yield* handling.snapshot(input.rootId);
@@ -1650,7 +1801,11 @@ const make = Effect.gen(function* () {
           } else {
             yield* handling.guard(input);
           }
-          if (input.leadThreadId !== null) yield* agentAuthor(input.leadThreadId);
+          if (input.leadThreadId !== null) {
+            if (!(yield* belongsToTree(input.leadThreadId, root.boardTreeId)))
+              return yield* notFound();
+            yield* agentAuthor(input.leadThreadId);
+          }
           yield* sql`UPDATE board_discussions SET lead_thread_id=${input.leadThreadId} WHERE root_id=${input.rootId}`;
           if (current.leadThreadId === null && input.leadThreadId !== null) {
             const adopted = yield* sql<{
@@ -1690,6 +1845,8 @@ const make = Effect.gen(function* () {
     "MessageBoardService.updateContext",
   )(
     function* (input) {
+      if (input.boardTreeId !== undefined)
+        yield* requireDiscussionScope(input.rootId, input.boardTreeId);
       const state = yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* handling.guard(input);
@@ -1710,6 +1867,7 @@ const make = Effect.gen(function* () {
     "MessageBoardService.reassignRequest",
   )(
     function* (input) {
+      const root = yield* requireDiscussionScope(input.rootId, input.boardTreeId);
       const state = yield* sql.withTransaction(
         Effect.gen(function* () {
           const current = yield* handling.guard(input, input);
@@ -1720,6 +1878,8 @@ const make = Effect.gen(function* () {
             yield* sql`UPDATE board_dispatch_batches SET status='superseded' WHERE id=${previous.batchId}`;
             yield* sql`UPDATE board_responsibilities SET status='held' WHERE batch_id=${previous.batchId} AND status IN ('queued','running')`;
           }
+          if (!(yield* belongsToTree(input.recipientThreadId, root.boardTreeId)))
+            return yield* notFound();
           yield* agentAuthor(input.recipientThreadId);
           yield* sql`UPDATE board_responsibilities SET recipient_thread_id=${input.recipientThreadId},generation=generation+1,status='pending',outcome_json=NULL,batch_id=NULL,run_id=NULL,selection_id=NULL,selection_generation=NULL,availability_reason=NULL WHERE id=${input.responsibilityId}`;
           if (Option.isSome(outbox))
@@ -1750,6 +1910,8 @@ const make = Effect.gen(function* () {
     "MessageBoardService.resumeRequest",
   )(
     function* (input) {
+      if (input.boardTreeId !== undefined)
+        yield* requireDiscussionScope(input.rootId, input.boardTreeId);
       const state = yield* sql.withTransaction(
         Effect.gen(function* () {
           const current = yield* handling.guard(input, input);
@@ -1791,6 +1953,8 @@ const make = Effect.gen(function* () {
     "MessageBoardService.reportOutcome",
   )(
     function* (input) {
+      if (input.boardTreeId !== undefined)
+        yield* requireDiscussionScope(input.rootId, input.boardTreeId);
       const state = yield* sql.withTransaction(
         Effect.gen(function* () {
           const current = yield* handling.snapshot(input.rootId);
@@ -1827,6 +1991,8 @@ const make = Effect.gen(function* () {
     "MessageBoardService.closeDiscussion",
   )(
     function* (input) {
+      if (input.boardTreeId !== undefined)
+        yield* requireDiscussionScope(input.rootId, input.boardTreeId);
       const state = yield* sql.withTransaction(
         Effect.gen(function* () {
           const state = yield* handling.guard(input);
@@ -1850,6 +2016,8 @@ const make = Effect.gen(function* () {
     "MessageBoardService.reopenDiscussion",
   )(
     function* (input) {
+      if (input.boardTreeId !== undefined)
+        yield* requireDiscussionScope(input.rootId, input.boardTreeId);
       const state = yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* handling.guard(input);
@@ -1864,6 +2032,7 @@ const make = Effect.gen(function* () {
   );
 
   return MessageBoardService.of({
+    treeForThread,
     readHandling,
     assignLead,
     updateContext,

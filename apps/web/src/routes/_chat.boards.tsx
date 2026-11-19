@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import type { BoardPostId, EnvironmentId } from "@t3tools/contracts";
+import type { BoardPostId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { BoardsView } from "../components/boards/BoardsView";
 import { useBoardsViewModel } from "../components/boards/useBoardsViewModel";
@@ -9,6 +9,7 @@ export interface BoardsSearch {
   thread?: BoardPostId | undefined;
   boardSort?: "activity" | "created" | undefined;
   environmentId?: EnvironmentId;
+  boardTreeId?: ThreadId | undefined;
 }
 
 export const Route = createFileRoute("/_chat/boards")({
@@ -17,6 +18,9 @@ export const Route = createFileRoute("/_chat/boards")({
       ? { channel: raw.channel }
       : {}),
     ...(typeof raw.thread === "string" && raw.thread ? { thread: raw.thread as BoardPostId } : {}),
+    ...(typeof raw.boardTreeId === "string" && raw.boardTreeId
+      ? { boardTreeId: raw.boardTreeId as ThreadId }
+      : {}),
     ...(raw.boardSort === "created" ? { boardSort: "created" } : {}),
     ...(typeof raw.environmentId === "string" && raw.environmentId
       ? { environmentId: raw.environmentId as EnvironmentId }

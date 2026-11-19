@@ -23,6 +23,9 @@ export interface BoardWorker {
 
 export interface BoardsViewModel {
   environmentId: EnvironmentId | null;
+  boardTreeId: ThreadId | null;
+  boardTrees: readonly { id: ThreadId; title: string }[];
+  onSelectBoardTree: (id: ThreadId) => void;
   channels: readonly BoardChannel[] | null;
   selectedChannelName: string | null;
   threads: readonly BoardThreadSummary[] | null;

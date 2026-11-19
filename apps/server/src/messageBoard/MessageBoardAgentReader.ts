@@ -63,6 +63,7 @@ const PostCursor = Schema.Struct({
   offset: Position.offset,
 });
 const SearchCursor = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   kind: Schema.Literal("search"),
   query: Schema.String,
   channelName: Schema.String,
@@ -158,6 +159,7 @@ export class MessageBoardAgentReader extends Context.Service<
       viewer: BoardViewer;
       rootId: BoardPostId;
       cursor?: string;
+      boardTreeId?: ThreadId;
     }) => Effect.Effect<
       ThreadPage,
       MessageBoardError | MessageBoardService.MessageBoardStorageError
@@ -166,6 +168,7 @@ export class MessageBoardAgentReader extends Context.Service<
       viewer: BoardViewer;
       postId: BoardPostId;
       cursor?: string;
+      boardTreeId?: ThreadId;
     }) => Effect.Effect<
       PostChunk,
       MessageBoardError | MessageBoardService.MessageBoardStorageError
@@ -176,6 +179,7 @@ export class MessageBoardAgentReader extends Context.Service<
       rootId?: BoardPostId;
       limit?: number;
       cursor?: string;
+      boardTreeId?: ThreadId;
     }) => Effect.Effect<
       SearchPage,
       MessageBoardError | MessageBoardService.MessageBoardStorageError
@@ -196,12 +200,13 @@ const make = Effect.gen(function* () {
   const keyFor = (viewer: BoardViewer) =>
     viewer.kind === "user" ? "user" : `thread:${viewer.threadId}`;
   const columns = sql.literal(
-    `id, root_id AS "rootId", channel_name AS "channelName", author_json AS author, text, created_at AS "createdAt", reply_to_id AS "replyToId", mentions_json AS mentions`,
+    `id, root_id AS "rootId", substr(channel_name, instr(channel_name, '/') + 1) AS "channelName", (SELECT board_tree_id FROM board_channels WHERE name = channel_name) AS "boardTreeId", author_json AS author, text, created_at AS "createdAt", reply_to_id AS "replyToId", mentions_json AS mentions`,
   );
   const Row = Schema.Struct({
     id: BoardPostId,
     rootId: BoardPostId,
     channelName: Schema.String,
+    boardTreeId: Schema.NullOr(ThreadId),
     author: Schema.fromJsonString(Schema.toType(BoardPost.fields.author)),
     text: Schema.String,
     createdAt: Schema.String,
@@ -211,8 +216,9 @@ const make = Effect.gen(function* () {
   const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
   const decodeAuthor = Schema.decodeUnknownEffect(Schema.fromJsonString(BoardPost.fields.author));
   const postsFor = Effect.fn("MessageBoardAgentReader.postsFor")(function* (rows: unknown) {
-    return (yield* decodeRows(rows)).map(({ replyToId, mentions, ...post }) => ({
+    return (yield* decodeRows(rows)).map(({ replyToId, mentions, boardTreeId, ...post }) => ({
       ...post,
+      ...(boardTreeId === null ? {} : { boardTreeId }),
       ...(replyToId === null ? {} : { replyToId }),
       ...(mentions === null ? {} : { mentions }),
     }));
@@ -281,7 +287,10 @@ const make = Effect.gen(function* () {
             Effect.mapError(invalidCursor),
           );
     if (cursor !== null && cursor.postId !== input.postId) return yield* invalidCursor();
-    const post = yield* board.readPost({ postId: input.postId });
+    const post = yield* board.readPost({
+      postId: input.postId,
+      ...(input.boardTreeId === undefined ? {} : { boardTreeId: input.boardTreeId }),
+    });
     const offset = cursor?.offset ?? 0;
     if (offset >= post.text.length) return yield* invalidCursor();
     const result = fitChunk(post, offset, (post) => post);
@@ -297,7 +306,10 @@ const make = Effect.gen(function* () {
   const readThread: MessageBoardAgentReader["Service"]["readThread"] = Effect.fn(
     "MessageBoardAgentReader.readThread",
   )(function* (input) {
-    const root = yield* board.readPost({ postId: input.rootId });
+    const root = yield* board.readPost({
+      postId: input.rootId,
+      ...(input.boardTreeId === undefined ? {} : { boardTreeId: input.boardTreeId }),
+    });
     if (root.rootId !== root.id)
       return yield* new MessageBoardError({
         code: "not_found",
@@ -558,6 +570,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const query = input.query?.trim() ?? "";
     const channelName = input.channelName ?? "";
+    const channelKey = MessageBoardService.boardChannelKey(channelName, input.boardTreeId);
     const rootId = input.rootId ?? "";
     const limit = input.limit ?? PAGE_SIZE;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) return yield* invalidCursor();
@@ -569,16 +582,21 @@ const make = Effect.gen(function* () {
           );
     if (
       cursor &&
-      (cursor.query !== query || cursor.channelName !== channelName || cursor.rootId !== rootId)
+      (cursor.query !== query ||
+        cursor.channelName !== channelName ||
+        cursor.rootId !== rootId ||
+        cursor.boardTreeId !== input.boardTreeId)
     )
       return yield* invalidCursor();
     const latest = yield* sql<{
       time: string | null;
-    }>`SELECT MAX(created_at) AS time FROM board_posts`;
+    }>`SELECT MAX(created_at) AS time FROM board_posts
+      WHERE (${input.boardTreeId ?? null} IS NULL OR channel_name IN (SELECT name FROM board_channels WHERE board_tree_id = ${input.boardTreeId ?? null}))`;
     const snapshot = cursor?.snapshot ?? latest[0]?.time ?? "";
     const posts = yield* postsFor(
       yield* sql`SELECT ${columns} FROM board_posts
-      WHERE (${channelName} = '' OR channel_name = ${channelName}) AND (${rootId} = '' OR root_id = ${rootId})
+      WHERE (${input.boardTreeId ?? null} IS NULL OR channel_name IN (SELECT name FROM board_channels WHERE board_tree_id = ${input.boardTreeId ?? null}))
+        AND (${channelName} = '' OR channel_name = ${channelKey}) AND (${rootId} = '' OR root_id = ${rootId})
         AND instr(lower(text), lower(${query})) > 0 AND created_at <= ${snapshot}
         AND ${cursor === null ? sql`1` : sql`(created_at < ${cursor.time} OR (created_at = ${cursor.time} AND id < ${cursor.id}))`}
       ORDER BY created_at DESC, id DESC LIMIT ${limit + 1}`,
@@ -587,6 +605,7 @@ const make = Effect.gen(function* () {
     for (const post of posts.slice(0, limit)) {
       const nextCursor = encodeSearchCursor({
         kind: "search",
+        ...(input.boardTreeId === undefined ? {} : { boardTreeId: input.boardTreeId }),
         query,
         channelName,
         rootId,

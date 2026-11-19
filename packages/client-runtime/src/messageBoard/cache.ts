@@ -9,9 +9,11 @@ import type {
   BoardThreadSummary,
   MessageBoardListThreadsResult,
   MessageBoardTodosResult,
+  ThreadId,
 } from "@t3tools/contracts";
 
 export interface BoardThreadPage {
+  boardTreeId?: ThreadId;
   channelName: string;
   sort: BoardThreadSort;
   result: MessageBoardListThreadsResult;
@@ -39,9 +41,14 @@ export const emptyBoardCache: BoardCache = {
   recentPostIds: [],
 };
 
+const readMarkerKey = (name: string, boardTreeId?: ThreadId) =>
+  boardTreeId === undefined ? name : JSON.stringify([boardTreeId, name]);
+const sameChannel = (left: BoardChannel, right: BoardChannel) =>
+  left.name === right.name && left.boardTreeId === right.boardTreeId;
+
 /** A discussion is read up to the later of its channel's marker and its own. */
-function readAt(cache: BoardCache, channelName: string, rootId: string) {
-  const channel = cache.readMarkers[channelName] ?? "";
+function readAt(cache: BoardCache, channelName: string, rootId: string, boardTreeId?: ThreadId) {
+  const channel = cache.readMarkers[readMarkerKey(channelName, boardTreeId)] ?? "";
   const thread = cache.threadReadMarkers[rootId] ?? "";
   return thread > channel ? thread : channel;
 }
@@ -50,15 +57,20 @@ function readAt(cache: BoardCache, channelName: string, rootId: string) {
 export function boardThreadUnreadCount(cache: BoardCache, rootId: string) {
   const detail = cache.details[rootId];
   if (!detail?.summary.unread) return 0;
-  const marker = readAt(cache, detail.summary.root.channelName, rootId);
+  const marker = readAt(
+    cache,
+    detail.summary.root.channelName,
+    rootId,
+    detail.summary.root.boardTreeId,
+  );
   const own = detail.summary.readAt ?? "";
   const since = marker > own ? marker : own;
   return detail.posts.filter((post) => post.author.kind !== "user" && post.createdAt > since)
     .length;
 }
 
-export const boardPageKey = (channelName: string, sort: BoardThreadSort) =>
-  JSON.stringify([channelName, sort]);
+export const boardPageKey = (channelName: string, sort: BoardThreadSort, boardTreeId?: ThreadId) =>
+  JSON.stringify([channelName, sort, boardTreeId]);
 
 function sameAuthor(left: BoardAuthor, right: BoardAuthor) {
   return left.kind !== "agent"
@@ -127,7 +139,7 @@ export function mergeBoardChannels(
 ): BoardCache {
   let next = cache;
   for (const channel of incoming) {
-    const previous = cache.channels?.find((item) => item.name === channel.name);
+    const previous = cache.channels?.find((item) => sameChannel(item, channel));
     next = applyBoardEvent(next, {
       type: "channel-upserted",
       channel:
@@ -142,10 +154,10 @@ export function mergeBoardChannels(
 
 export function mergeBoardThreadPage(
   cache: BoardCache,
-  input: { channelName: string; sort: BoardThreadSort; cursor?: string },
+  input: { channelName: string; sort: BoardThreadSort; cursor?: string; boardTreeId?: ThreadId },
   result: MessageBoardListThreadsResult,
 ): BoardCache {
-  const key = boardPageKey(input.channelName, input.sort);
+  const key = boardPageKey(input.channelName, input.sort, input.boardTreeId);
   const previous = cache.pages[key]?.result;
   const previousThreads = previous?.threads ?? [];
   const incoming = result.threads.map((summary) => {
@@ -155,7 +167,8 @@ export function mergeBoardThreadPage(
         (item.lastActivityAt > summary.lastActivityAt || item.replyCount > summary.replyCount),
     );
     const latest = newer ?? summary;
-    return latest.lastActivityAt <= readAt(cache, input.channelName, latest.root.id)
+    return latest.lastActivityAt <=
+      readAt(cache, input.channelName, latest.root.id, input.boardTreeId)
       ? { ...latest, unread: false }
       : latest;
   });
@@ -175,6 +188,7 @@ export function mergeBoardThreadPage(
       ...cache.pages,
       [key]: {
         channelName: input.channelName,
+        ...(input.boardTreeId === undefined ? {} : { boardTreeId: input.boardTreeId }),
         sort: input.sort,
         result: {
           threads: sortBoardThreads(threads, input.sort),
@@ -255,7 +269,8 @@ export function mergeBoardDetail(
           ) ?? []),
         ],
         summary:
-          latest.lastActivityAt <= readAt(cache, latest.root.channelName, rootId)
+          latest.lastActivityAt <=
+          readAt(cache, latest.root.channelName, rootId, latest.root.boardTreeId)
             ? { ...latest, unread: false }
             : latest,
         posts: [
@@ -309,20 +324,22 @@ export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCach
   if (event.type === "channel-upserted") {
     const channels = cache.channels ?? [];
     const incoming =
-      event.channel.lastActivityAt <= (cache.readMarkers[event.channel.name] ?? "")
+      event.channel.lastActivityAt <=
+      (cache.readMarkers[readMarkerKey(event.channel.name, event.channel.boardTreeId)] ?? "")
         ? { ...event.channel, unreadCount: 0 }
         : event.channel;
-    const exists = channels.some((channel) => channel.name === incoming.name);
+    const exists = channels.some((channel) => sameChannel(channel, incoming));
     return {
       ...cache,
       channels: exists
-        ? channels.map((channel) => (channel.name === incoming.name ? incoming : channel))
+        ? channels.map((channel) => (sameChannel(channel, incoming) ? incoming : channel))
         : [...channels, incoming],
     };
   }
 
   if (event.type === "read-marker-updated") {
-    const { rootId } = event;
+    const { rootId, boardTreeId } = event;
+    const markerKey = readMarkerKey(event.channelName, boardTreeId);
     const shouldRead = (summary: BoardThreadSummary) =>
       summary.unread &&
       summary.lastActivityAt <= event.readAt &&
@@ -330,11 +347,15 @@ export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCach
     const readSummary = (summary: BoardThreadSummary) =>
       shouldRead(summary) ? { ...summary, unread: false } : summary;
     const readPage = (page: BoardThreadPage) =>
-      page.channelName === event.channelName && page.result.threads.some(shouldRead)
+      page.channelName === event.channelName &&
+      page.boardTreeId === boardTreeId &&
+      page.result.threads.some(shouldRead)
         ? { ...page, result: { ...page.result, threads: page.result.threads.map(readSummary) } }
         : page;
     const readDetail = (detail: BoardThreadDetail) =>
-      detail.summary.root.channelName === event.channelName && shouldRead(detail.summary)
+      detail.summary.root.channelName === event.channelName &&
+      detail.summary.root.boardTreeId === boardTreeId &&
+      shouldRead(detail.summary)
         ? { ...detail, summary: readSummary(detail.summary) }
         : detail;
     if (rootId !== undefined) {
@@ -351,16 +372,17 @@ export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCach
           detail === undefined ? cache.details : { ...cache.details, [rootId]: readDetail(detail) },
       };
     }
-    if ((cache.readMarkers[event.channelName] ?? "") > event.readAt) return cache;
+    if ((cache.readMarkers[markerKey] ?? "") > event.readAt) return cache;
     const unreadChannel = cache.channels?.find(
       (channel) =>
         channel.name === event.channelName &&
+        channel.boardTreeId === boardTreeId &&
         channel.lastActivityAt <= event.readAt &&
         channel.unreadCount > 0,
     );
     return {
       ...cache,
-      readMarkers: { ...cache.readMarkers, [event.channelName]: event.readAt },
+      readMarkers: { ...cache.readMarkers, [markerKey]: event.readAt },
       channels: unreadChannel
         ? cache.channels!.map((channel) =>
             channel === unreadChannel ? { ...channel, unreadCount: 0 } : channel,
@@ -416,10 +438,10 @@ export function applyBoardEvent(cache: BoardCache, event: BoardEvent): BoardCach
 
   const post = event.post;
   if (cache.recentPostIds.includes(post.id)) return cache;
-  const unread = post.createdAt > readAt(cache, post.channelName, post.rootId);
+  const unread = post.createdAt > readAt(cache, post.channelName, post.rootId, post.boardTreeId);
   const pages = { ...cache.pages };
   for (const [key, page] of Object.entries(pages)) {
-    if (page.channelName !== post.channelName) continue;
+    if (page.channelName !== post.channelName || page.boardTreeId !== post.boardTreeId) continue;
     const existing = page.result.threads.find((summary) => summary.root.id === post.rootId);
     if (existing === undefined && post.id !== post.rootId) continue;
     const summary =

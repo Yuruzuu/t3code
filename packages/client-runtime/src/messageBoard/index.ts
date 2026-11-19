@@ -103,13 +103,21 @@ export function createMessageBoardAtoms<R, E>(
                 for (const page of Object.values(previous.pages)) {
                   if (
                     page.channelName !== event.post.channelName ||
+                    page.boardTreeId !== event.post.boardTreeId ||
                     page.result.threads.some((item) => item.root.id === event.post.rootId)
                   )
                     continue;
                   get.registry.refresh(
                     threadQuery({
                       environmentId,
-                      input: { channelName: page.channelName, sort: page.sort, limit: 30 },
+                      input: {
+                        channelName: page.channelName,
+                        sort: page.sort,
+                        limit: 30,
+                        ...(page.boardTreeId === undefined
+                          ? {}
+                          : { boardTreeId: page.boardTreeId }),
+                      },
                     }),
                   );
                 }
@@ -135,15 +143,24 @@ export function createMessageBoardAtoms<R, E>(
     ),
   );
   const pageFamily = Atom.family((key: string) => {
-    const [environmentId, channelName, sort] = JSON.parse(key) as [
+    const [environmentId, channelName, sort, boardTreeId] = JSON.parse(key) as [
       EnvironmentId,
       string,
       BoardThreadSort,
+      ThreadId | null,
     ];
     return Atom.make((get) => {
       get.mount(events(environmentId));
-      get(threadQuery({ environmentId, input: { channelName, sort, limit: 30 } }));
-      return get(cache(environmentId)).pages[boardPageKey(channelName, sort)]?.result ?? null;
+      get(
+        threadQuery({
+          environmentId,
+          input: { channelName, sort, limit: 30, ...(boardTreeId === null ? {} : { boardTreeId }) },
+        }),
+      );
+      return (
+        get(cache(environmentId)).pages[boardPageKey(channelName, sort, boardTreeId ?? undefined)]
+          ?.result ?? null
+      );
     });
   });
   const agentThreadsFamily = Atom.family((key: string) => {
@@ -154,11 +171,27 @@ export function createMessageBoardAtoms<R, E>(
     });
   });
   const detailFamily = Atom.family((key: string) => {
-    const [environmentId, rootId] = JSON.parse(key) as [EnvironmentId, BoardPostId];
+    const [environmentId, rootId, boardTreeId] = JSON.parse(key) as [
+      EnvironmentId,
+      BoardPostId,
+      ThreadId | null | undefined,
+    ];
     return Atom.make((get) => {
       get.mount(events(environmentId));
-      get(detailQuery({ environmentId, input: { rootId, limit: boardThreadPageSize } }));
-      return get(cache(environmentId)).details[rootId] ?? null;
+      get(
+        detailQuery({
+          environmentId,
+          input: {
+            rootId,
+            limit: boardThreadPageSize,
+            ...(boardTreeId == null ? {} : { boardTreeId }),
+          },
+        }),
+      );
+      const detail = get(cache(environmentId)).details[rootId];
+      return detail && (boardTreeId == null || detail.summary.root.boardTreeId === boardTreeId)
+        ? detail
+        : null;
     });
   });
   const threadUnreadFamily = Atom.family((key: string) => {
@@ -177,13 +210,17 @@ export function createMessageBoardAtoms<R, E>(
     channelQuery,
     threadQuery,
     detailQuery,
-    threads: (environmentId: EnvironmentId, channelName: string, sort: BoardThreadSort) =>
-      pageFamily(JSON.stringify([environmentId, channelName, sort])),
+    threads: (
+      environmentId: EnvironmentId,
+      channelName: string,
+      sort: BoardThreadSort,
+      boardTreeId?: ThreadId,
+    ) => pageFamily(JSON.stringify([environmentId, channelName, sort, boardTreeId])),
     /** Discussions the agent in `threadId` posted in or is subscribed to. */
     agentThreads: (environmentId: EnvironmentId, threadId: ThreadId) =>
       agentThreadsFamily(JSON.stringify([environmentId, threadId])),
-    thread: (environmentId: EnvironmentId, rootId: BoardPostId) =>
-      detailFamily(JSON.stringify([environmentId, rootId])),
+    thread: (environmentId: EnvironmentId, rootId: BoardPostId, boardTreeId?: ThreadId) =>
+      detailFamily(JSON.stringify([environmentId, rootId, boardTreeId])),
     post: createEnvironmentRpcCommand(runtime, {
       label: "message-board:post",
       tag: WS_METHODS.messageBoardPost,

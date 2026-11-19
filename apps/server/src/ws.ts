@@ -29,6 +29,7 @@ import {
   AcpRegistryOperationError,
   CommandId,
   MessageBoardError,
+  MessageBoardPostInput,
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
@@ -1978,6 +1979,13 @@ export const layerWsRpc = (
         return yield* mutateProjectWithClone(projectService, projectCloneTracker, mutation);
       });
 
+      const resolveBoardTree = (tree: ThreadId | undefined) =>
+        tree === undefined
+          ? Effect.fail(
+              new MessageBoardError({ code: "invalid_input", message: "Choose an agent tree." }),
+            )
+          : messageBoard.treeForThread(tree);
+
       const handlers = ServerWsRpcGroup.of({
         [WS_METHODS.messageBoardListChannels]: (input) =>
           messageBoard
@@ -1990,25 +1998,27 @@ export const layerWsRpc = (
               ),
             ),
         [WS_METHODS.messageBoardCreateChannel]: (input) =>
-          messageBoard
-            .createChannel({ ...input, author: { kind: "user" } })
-            .pipe(
-              Effect.mapError((error) =>
-                isMessageBoardError(error)
-                  ? error
-                  : new MessageBoardError({ code: "storage", message: error.message }),
-              ),
+          resolveBoardTree(input.boardTreeId).pipe(
+            Effect.flatMap((boardTreeId) =>
+              messageBoard.createChannel({ ...input, author: { kind: "user" }, boardTreeId }),
             ),
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({ code: "storage", message: error.message }),
+            ),
+          ),
         [WS_METHODS.messageBoardListThreads]: (input) =>
-          messageBoard
-            .listThreads({ ...input, viewer: { kind: "user" } })
-            .pipe(
-              Effect.mapError((error) =>
-                isMessageBoardError(error)
-                  ? error
-                  : new MessageBoardError({ code: "storage", message: error.message }),
-              ),
+          resolveBoardTree(input.boardTreeId).pipe(
+            Effect.flatMap((boardTreeId) =>
+              messageBoard.listThreads({ ...input, viewer: { kind: "user" }, boardTreeId }),
             ),
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({ code: "storage", message: error.message }),
+            ),
+          ),
         [WS_METHODS.messageBoardReadThread]: (input) =>
           messageBoard
             .readThread({ ...input, viewer: { kind: "user" } })
@@ -2029,15 +2039,25 @@ export const layerWsRpc = (
                   : new MessageBoardError({ code: "storage", message: error.message }),
               ),
             ),
-        [WS_METHODS.messageBoardPost]: (input) =>
-          messageBoard.postAndNotify({ ...input, author: { kind: "user" } }).pipe(
-            Effect.map(({ post, notifiedThreads }) => ({ post, notifiedThreads })),
-            Effect.mapError((error) =>
-              isMessageBoardError(error)
-                ? error
-                : new MessageBoardError({ code: "storage", message: error.message }),
-            ),
+        [WS_METHODS.messageBoardPost]: Effect.fn("ws.messageBoard.post")(
+          function* (input: typeof MessageBoardPostInput.Type) {
+            const boardTreeId =
+              input.destination.kind === "channel" || input.boardTreeId !== undefined
+                ? yield* resolveBoardTree(input.boardTreeId)
+                : undefined;
+            return yield* messageBoard.postAndNotify({
+              ...input,
+              author: { kind: "user" },
+              ...(boardTreeId === undefined ? {} : { boardTreeId }),
+            });
+          },
+          Effect.map(({ post, notifiedThreads }) => ({ post, notifiedThreads })),
+          Effect.mapError((error) =>
+            isMessageBoardError(error)
+              ? error
+              : new MessageBoardError({ code: "storage", message: error.message }),
           ),
+        ),
         [WS_METHODS.messageBoardReact]: (input) =>
           messageBoard
             .react({ ...input, viewer: { kind: "user" } })
@@ -2049,15 +2069,20 @@ export const layerWsRpc = (
               ),
             ),
         [WS_METHODS.messageBoardMarkRead]: (input) =>
-          messageBoard
-            .markRead({ ...input, viewer: { kind: "user" } })
-            .pipe(
-              Effect.mapError((error) =>
-                isMessageBoardError(error)
-                  ? error
-                  : new MessageBoardError({ code: "storage", message: error.message }),
-              ),
+          ("channelName" in input
+            ? resolveBoardTree(input.boardTreeId).pipe(
+                Effect.flatMap((boardTreeId) =>
+                  messageBoard.markRead({ ...input, viewer: { kind: "user" }, boardTreeId }),
+                ),
+              )
+            : messageBoard.markRead({ ...input, viewer: { kind: "user" } })
+          ).pipe(
+            Effect.mapError((error) =>
+              isMessageBoardError(error)
+                ? error
+                : new MessageBoardError({ code: "storage", message: error.message }),
             ),
+          ),
         [WS_METHODS.messageBoardAssignLead]: (input) =>
           messageBoard.assignLead({ ...input, viewer: { kind: "user" } }).pipe(
             Effect.mapError((error) =>

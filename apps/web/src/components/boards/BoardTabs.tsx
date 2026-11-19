@@ -17,6 +17,7 @@ import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { PanelTabCloseButton } from "../ui/panel-tab-close-button";
 import { BoardAuthorAvatar, BoardUnreadCount } from "./BoardPrimitives";
 import { useBoardDiscussionUnreadCount } from "./boardState";
@@ -99,6 +100,10 @@ export function BoardTabs({
 }) {
   const gt = useGT();
   const { tabs, selectedRootId, onMoveTab } = model;
+  const boardItems = model.boardTrees.map(({ id, title }) => ({
+    value: id,
+    label: title || gt("Untitled thread"),
+  }));
   const navRef = useRef<HTMLElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -117,6 +122,28 @@ export function BoardTabs({
 
   return (
     <WorkspacePageHeader electron={isElectron} className="gap-2">
+      {boardItems.length > 0 && (
+        <div className="w-44 min-w-0 shrink-0 max-sm:w-28">
+          <Select
+            items={boardItems}
+            value={model.boardTreeId}
+            onValueChange={(id) => {
+              if (id !== null) model.onSelectBoardTree(id);
+            }}
+          >
+            <SelectTrigger size="xs" aria-label={gt("Agent tree")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              {boardItems.map(({ value, label }) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
+      )}
       <button
         type="button"
         onClick={model.onShowAllChannels}

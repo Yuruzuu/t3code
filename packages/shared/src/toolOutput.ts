@@ -63,6 +63,7 @@ interface CompactToolOutput {
 /** A board discussion a post started, kept so the thread can link to it. */
 export interface BoardDiscussionReference {
   rootId: string;
+  boardTreeId?: string;
   channelName: string;
   title: string;
 }
@@ -73,16 +74,23 @@ function readCompactBoardDiscussion(value: unknown): BoardDiscussionReference | 
   if (!Predicate.isObject(value)) return undefined;
   const rootId = boundedId(value.rootId);
   const channelName = boundedId(value.channelName);
+  const boardTreeId = boundedId(value.boardTreeId);
   const title = typeof value.title === "string" ? value.title : undefined;
   return rootId === undefined || channelName === undefined || title === undefined
     ? undefined
-    : { rootId, channelName, title: Array.from(title).slice(0, MAX_BOARD_TITLE_CHARS).join("") };
+    : {
+        rootId,
+        channelName,
+        ...(boardTreeId === undefined ? {} : { boardTreeId }),
+        title: Array.from(title).slice(0, MAX_BOARD_TITLE_CHARS).join(""),
+      };
 }
 
 function readBoardDiscussion(value: unknown): BoardDiscussionReference | undefined {
   if (!Predicate.isObject(value)) return undefined;
   const rootId = boundedId(value.rootId);
   const channelName = boundedId(value.channelName);
+  const boardTreeId = boundedId(value.boardTreeId);
   // Replies point at an existing discussion; only an opening post starts one.
   if (rootId === undefined || channelName === undefined || boundedId(value.id) !== rootId) {
     return undefined;
@@ -98,6 +106,7 @@ function readBoardDiscussion(value: unknown): BoardDiscussionReference | undefin
   return {
     rootId,
     channelName,
+    ...(boardTreeId === undefined ? {} : { boardTreeId }),
     title: Array.from(firstLine).slice(0, MAX_BOARD_TITLE_CHARS).join("") || "Untitled discussion",
   };
 }

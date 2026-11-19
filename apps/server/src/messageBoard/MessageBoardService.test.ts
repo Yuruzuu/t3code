@@ -30,6 +30,8 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as MessageBoardService from "./MessageBoardService.ts";
+import * as MessageBoardAgentReader from "./MessageBoardAgentReader.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as OpenAIDecisionsClient from "./OpenAIDecisionsClient.ts";
 import * as MessageBoardTodoStore from "./MessageBoardTodoStore.ts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
@@ -105,6 +107,122 @@ const layerTest = MessageBoardService.layer.pipe(
   ),
   Layer.provide(layerPlatform),
 );
+
+it.effect("isolates channels, discussion IDs, and notifications by delegation tree", () => {
+  const tree = ThreadId.make("root/team-a");
+  const child = ThreadId.make("child-a");
+  const grandchild = ThreadId.make("grandchild-a");
+  const fork = ThreadId.make("fork-a");
+  const shell = (id: ThreadId) => {
+    const thread = liveThreadShell(id);
+    const parent = id === grandchild ? child : id === child || id === fork ? tree : null;
+    return {
+      ...thread,
+      lineage: {
+        ...thread.lineage,
+        relationshipToParent:
+          parent === null ? null : id === fork ? ("fork" as const) : ("subagent" as const),
+        parentThreadId: parent,
+      },
+    };
+  };
+  const layer = MessageBoardAgentReader.layer.pipe(
+    Layer.provideMerge(MessageBoardService.layer),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provide(
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getThreadShell: (id) => Effect.succeed(shell(id)),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadShell: (id) => Effect.succeed(shell(id)),
+        dispatch: () => Effect.succeed({} as never),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+    ),
+    Layer.provide(layerPlatform),
+  );
+  return Effect.gen(function* () {
+    const board = yield* MessageBoardService.MessageBoardService;
+    const reader = yield* MessageBoardAgentReader.MessageBoardAgentReader;
+    const boardTreeId = yield* board.treeForThread(grandchild);
+    assert.equal(boardTreeId, tree);
+    assert.equal(yield* board.treeForThread(child), tree);
+    assert.equal(yield* board.treeForThread(fork), fork);
+    const viewer = { kind: "thread" as const, threadId: grandchild };
+    const scope = { viewer, boardTreeId };
+    const destination = { kind: "channel" as const, channelName: "general" };
+    const a = yield* board.post({
+      author: user,
+      boardTreeId,
+      destination,
+      text: "Tree A",
+      requestKey: "same-key",
+    });
+    const b = yield* board.post({
+      author: user,
+      boardTreeId: fork,
+      destination,
+      text: "Tree B",
+      requestKey: "same-key",
+    });
+    const channels = yield* board.listChannels(scope);
+    assert.deepEqual(
+      channels.map(({ name, boardTreeId }) => [name, boardTreeId]),
+      [["general", tree]],
+    );
+    assert.deepEqual(
+      (yield* board.listThreads({
+        ...scope,
+        channelName: "general",
+        sort: "activity",
+      })).threads.map((thread) => thread.root.id),
+      [a.id],
+    );
+    assert.deepEqual(
+      (yield* reader.search({ boardTreeId, channelName: "general" })).posts.map((post) => post.id),
+      [a.id],
+    );
+    const target = { kind: "thread" as const, rootId: b.id };
+    const author = yield* board.agentAuthor(grandchild);
+    for (const operation of [
+      board.readThread({ ...scope, rootId: b.id }).pipe(Effect.asVoid),
+      reader.readPost({ ...scope, postId: b.id }).pipe(Effect.asVoid),
+      board.readHandling({ ...scope, rootId: b.id }).pipe(Effect.asVoid),
+      board.react({ ...scope, postId: b.id, emoji: "👍", active: true }),
+      board.subscribe({ ...scope, target }),
+      board.waitForPosts({ ...scope, rootId: b.id, timeoutMs: 100 }).pipe(Effect.asVoid),
+      board
+        .post({
+          author,
+          boardTreeId,
+          destination: { kind: "reply", rootId: b.id },
+          text: "Wrong tree",
+        })
+        .pipe(Effect.asVoid),
+      board
+        .assignLead({ viewer: user, rootId: a.id, leadThreadId: fork, expectedRevision: 1 })
+        .pipe(Effect.asVoid),
+    ]) {
+      const failure = yield* operation.pipe(Effect.flip);
+      assert.isTrue(isMessageBoardError(failure));
+      assert.propertyVal(failure, "code", "not_found");
+    }
+    const notice = yield* board.postAndNotify({
+      author,
+      boardTreeId,
+      destination,
+      text: `$@{boardPersona(fork).name}[${fork}] cross-tree mention`,
+      notifyThreads: [tree, fork],
+    });
+    assert.deepEqual(notice.post.mentions ?? [], []);
+    assert.deepEqual(notice.notifiedThreads, [tree]);
+    assert.deepEqual(notice.skippedThreads, [fork]);
+  }).pipe(Effect.provide(layer));
+});
 
 const layerTodoOwners = MessageBoardService.layer.pipe(
   Layer.provideMerge(EffectOutbox.layer),

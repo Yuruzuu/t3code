@@ -86,6 +86,46 @@ function setup(): BoardCache {
 }
 
 describe("message board cache", () => {
+  it("keeps equally named channels and unread markers separate across agent trees", () => {
+    const treeA = ThreadId.make("agent-tree-a");
+    const treeB = ThreadId.make("agent-tree-b");
+    const a = { ...post("root-a", 1), boardTreeId: treeA };
+    const b = { ...post("root-b", 2), boardTreeId: treeB };
+    const channel = setup().channels![0]!;
+    let cache = mergeBoardChannels(emptyBoardCache, [
+      { ...channel, boardTreeId: treeA },
+      { ...channel, boardTreeId: treeB },
+    ]);
+    for (const root of [a, b]) {
+      cache = mergeBoardThreadPage(
+        cache,
+        { channelName: "general", sort: "activity", boardTreeId: root.boardTreeId },
+        { threads: [summary(root)], nextCursor: null },
+      );
+    }
+    cache = applyBoardEvent(cache, {
+      type: "read-marker-updated",
+      channelName: "general",
+      boardTreeId: treeA,
+      readAt: b.createdAt,
+    });
+    const pageA = cache.pages[boardPageKey("general", "activity", treeA)]!;
+    const pageB = cache.pages[boardPageKey("general", "activity", treeB)]!;
+    expect(pageA.result.threads[0]?.unread).toBe(false);
+    expect(pageB.result.threads[0]?.unread).toBe(true);
+    expect(
+      cache.channels?.map(({ boardTreeId, unreadCount }) => [boardTreeId, unreadCount]),
+    ).toEqual([
+      [treeA, 0],
+      [treeB, 2],
+    ]);
+    const next = applyBoardEvent(cache, {
+      type: "post-created",
+      post: { ...post("another-a", 3), boardTreeId: treeA },
+    });
+    expect(next.pages[boardPageKey("general", "activity", treeB)]).toBe(pageB);
+  });
+
   it("retains handling events before detail loading and rejects stale reconnect snapshots", () => {
     const root = post("first", 1);
     const handling: BoardHandlingSnapshot = {

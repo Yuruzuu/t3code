@@ -33,6 +33,7 @@ import * as MessageBoardHandlers from "./handlers.ts";
 import { MessageBoardToolkit } from "./tools.ts";
 
 const CALLER = ThreadId.make("caller");
+const FOREIGN = ThreadId.make("other-tree");
 const ACTIVE = ThreadId.make("active-sibling");
 const IDLE = ThreadId.make("idle-sibling");
 const EXPLICIT = ThreadId.make("explicit-idle");
@@ -126,6 +127,7 @@ const makeHarness = Effect.fn("makeMessageBoardToolkitHarness")(function* (
   const posts = options.posts ?? [POST];
   const layerDependencies = Layer.mergeAll(
     Layer.mock(MessageBoardService.MessageBoardService)({
+      treeForThread: (threadId) => Effect.succeed(threadId === FOREIGN ? FOREIGN : CALLER),
       agentAuthor: (threadId) =>
         threadId === FAILED
           ? Effect.fail(new MessageBoardError({ code: "not_found", message: "Missing" }))
@@ -324,6 +326,7 @@ describe("message board MCP handlers", () => {
         expect(result).toEqual(acknowledgement);
         expect(result).not.toHaveProperty("todos");
         expect(yield* Ref.get(seen)).toEqual({
+          boardTreeId: CALLER,
           rootId: ROOT,
           requestKey: "release-reservation",
           viewer: { kind: "thread", threadId: CALLER },
@@ -392,7 +395,12 @@ describe("message board MCP handlers", () => {
       expect(yield* Ref.get(harness.operations)).toEqual([
         {
           operation: "upsertChannel",
-          input: { author: AUTHOR, name: "findings", description: "Confirmed findings only" },
+          input: {
+            author: AUTHOR,
+            boardTreeId: CALLER,
+            name: "findings",
+            description: "Confirmed findings only",
+          },
         },
       ]);
     }),
@@ -416,6 +424,7 @@ describe("message board MCP handlers", () => {
           operation: "subscribe",
           input: {
             viewer: { kind: "thread", threadId: IDLE },
+            boardTreeId: CALLER,
             target: { kind: "thread", rootId: ROOT },
           },
         },
@@ -423,6 +432,7 @@ describe("message board MCP handlers", () => {
           operation: "unsubscribe",
           input: {
             viewer: { kind: "thread", threadId: IDLE },
+            boardTreeId: CALLER,
             target: { kind: "channel", channelName: "findings" },
           },
         },
@@ -431,6 +441,10 @@ describe("message board MCP handlers", () => {
         .call("board_subscribe", { thread_id: ROOT, target_thread: FAILED })
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "MessageBoardError", code: "not_found" });
+      const foreign = yield* harness
+        .call("board_subscribe", { thread_id: ROOT, target_thread: FOREIGN })
+        .pipe(Effect.flip);
+      expect(foreign).toMatchObject({ _tag: "MessageBoardError", code: "not_found" });
       expect(yield* Ref.get(harness.operations)).toHaveLength(2);
     }),
   );
@@ -470,7 +484,7 @@ describe("message board MCP handlers", () => {
       expect(searched.posts[0]?.author).toEqual(NAMED_AUTHOR);
       expect(yield* Ref.get(harness.operations)).toContainEqual({
         operation: "listChannels",
-        input: { viewer: { kind: "thread", threadId: CALLER }, query: "find" },
+        input: { viewer: { kind: "thread", threadId: CALLER }, boardTreeId: CALLER, query: "find" },
       });
     }),
   );
@@ -538,6 +552,7 @@ describe("message board MCP handlers", () => {
           operation: "subscribe",
           input: {
             viewer: { kind: "thread", threadId: CALLER },
+            boardTreeId: CALLER,
             target: { kind: "channel", channelName: "findings" },
           },
         },
@@ -563,6 +578,7 @@ describe("message board MCP handlers", () => {
         operation: "postAndNotify",
         input: {
           author: AUTHOR,
+          boardTreeId: CALLER,
           destination: { kind: "reply", rootId: ROOT },
           text: "Fixed",
           replyToId: reply,
@@ -594,8 +610,20 @@ describe("message board MCP handlers", () => {
         (item) => item.operation === "react",
       );
       expect(reacts.map((item) => item.input)).toEqual([
-        { viewer: { kind: "thread", threadId: CALLER }, postId: ROOT, emoji: "👍", active: true },
-        { viewer: { kind: "thread", threadId: CALLER }, postId: ROOT, emoji: "👍", active: false },
+        {
+          viewer: { kind: "thread", threadId: CALLER },
+          boardTreeId: CALLER,
+          postId: ROOT,
+          emoji: "👍",
+          active: true,
+        },
+        {
+          viewer: { kind: "thread", threadId: CALLER },
+          boardTreeId: CALLER,
+          postId: ROOT,
+          emoji: "👍",
+          active: false,
+        },
       ]);
     }),
   );

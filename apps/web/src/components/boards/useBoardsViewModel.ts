@@ -8,7 +8,12 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { BoardThreadDetail, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  BoardThreadDetail,
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
@@ -34,6 +39,7 @@ const route = getRouteApi("/_chat/boards");
 const emptyChannels = Atom.make<BoardsViewModel["channels"]>(null);
 const emptyPage = Atom.make(null);
 const emptyThread = Atom.make<BoardsViewModel["thread"]>(null);
+const emptyShells = Atom.make<ReadonlyArray<OrchestrationV2ThreadShell>>([]);
 const emptyHandlingAgents = Atom.make<BoardsViewModel["handlingAgents"]>([]);
 const handlingAgents = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): BoardsViewModel["handlingAgents"] =>
@@ -93,29 +99,60 @@ export function useBoardsViewModel(): BoardsViewModel {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentId = search.environmentId ?? primaryEnvironmentId;
   const environment = useEnvironment(environmentId);
-  const availableHandlingAgents = useAtomValue(
+  const shells = useAtomValue(
+    environmentId === null
+      ? emptyShells
+      : environmentThreadShells.environmentThreadsAtom(environmentId),
+  );
+  const allChannels = useAtomValue(
+    environmentId === null ? emptyChannels : messageBoardAtoms.channels(environmentId),
+  );
+  const boardTrees = shells.filter(
+    (thread) => thread.lineage.relationshipToParent !== "subagent" && thread.deletedAt === null,
+  );
+  const selectedRootId = search.thread ?? null;
+  const loadedThread = useAtomValue(
+    environmentId === null || selectedRootId === null
+      ? emptyThread
+      : messageBoardAtoms.thread(environmentId, selectedRootId, search.boardTreeId),
+  );
+  const boardTreeId =
+    search.boardTreeId ??
+    loadedThread?.summary.root.boardTreeId ??
+    allChannels?.find((channel) => channel.boardTreeId !== undefined)?.boardTreeId ??
+    boardTrees[0]?.id ??
+    null;
+  const boardKey =
+    environmentId === null || boardTreeId === null
+      ? null
+      : JSON.stringify([environmentId, boardTreeId]);
+  const agents = useAtomValue(
     environmentId === null ? emptyHandlingAgents : handlingAgents(environmentId),
   );
   const canManageHandling = useAtomValue(
     messageBoardAtoms.assignLead.permissionAtom(environmentId),
   );
-  const channels = useAtomValue(
-    environmentId === null ? emptyChannels : messageBoardAtoms.channels(environmentId),
-  );
-  const tabs = useBoardViewStore(selectBoardTabs(environmentId));
-  const collapsedChannels = useBoardViewStore(selectCollapsedChannels(environmentId));
-  const selectedRootId = search.thread ?? null;
-  const loadedThread = useAtomValue(
-    environmentId === null || selectedRootId === null
-      ? emptyThread
-      : messageBoardAtoms.thread(environmentId, selectedRootId),
-  );
+  const channels = allChannels?.filter((channel) => channel.boardTreeId === boardTreeId) ?? null;
+  const threadById = new Map(shells.map((shell) => [shell.id, shell]));
+  const availableHandlingAgents = agents.filter((agent) => {
+    const visited = new Set<ThreadId>();
+    let current = threadById.get(agent.threadId);
+    while (current !== undefined && !visited.has(current.id)) {
+      if (current.lineage.relationshipToParent !== "subagent") return current.id === boardTreeId;
+      if (current.lineage.parentThreadId === null) return false;
+      visited.add(current.id);
+      current = threadById.get(current.lineage.parentThreadId);
+    }
+    return false;
+  });
+  const tabs = useBoardViewStore(selectBoardTabs(boardKey));
+  const collapsedChannels = useBoardViewStore(selectCollapsedChannels(boardKey));
   const selectedChannelName = search.channel ?? loadedThread?.summary.root.channelName ?? null;
   const threadSort = search.boardSort ?? "activity";
   const page = useAtomValue(
-    environmentId === null || selectedChannelName === null
+    environmentId === null || selectedChannelName === null || boardTreeId === null
       ? emptyPage
-      : messageBoardAtoms.threads(environmentId, selectedChannelName, threadSort),
+      : messageBoardAtoms.threads(environmentId, selectedChannelName, threadSort, boardTreeId),
   );
   const activities = useAtomValue(
     environmentId === null ? emptyActivities : agentActivities(environmentId)(locale),
@@ -129,11 +166,11 @@ export function useBoardsViewModel(): BoardsViewModel {
     queryError,
   );
   const threadsError = useEnvironmentQuerySelector(
-    environmentId === null || selectedChannelName === null
+    environmentId === null || selectedChannelName === null || boardTreeId === null
       ? null
       : messageBoardAtoms.threadQuery({
           environmentId,
-          input: { channelName: selectedChannelName, sort: threadSort, limit: 30 },
+          input: { channelName: selectedChannelName, boardTreeId, sort: threadSort, limit: 30 },
         }),
     queryError,
   );
@@ -142,7 +179,11 @@ export function useBoardsViewModel(): BoardsViewModel {
       ? null
       : messageBoardAtoms.detailQuery({
           environmentId,
-          input: { rootId: selectedRootId, limit: boardThreadPageSize },
+          input: {
+            rootId: selectedRootId,
+            limit: boardThreadPageSize,
+            ...(search.boardTreeId === undefined ? {} : { boardTreeId: search.boardTreeId }),
+          },
         }),
     queryError,
   );
@@ -190,19 +231,24 @@ export function useBoardsViewModel(): BoardsViewModel {
   const openTitle = openRoot === null ? null : boardMainPostContent(openRoot, resolve).title;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Every way into a discussion ends at this URL, including links from outside the boards view, and each gets a tab in the persisted store.
   useEffect(() => {
-    if (environmentId === null || openRoot === null || openTitle === null) return;
-    useBoardViewStore.getState().openTab(environmentId, {
+    if (boardKey === null || openRoot === null || openTitle === null) return;
+    useBoardViewStore.getState().openTab(boardKey, {
       rootId: openRoot.id,
       channelName: openRoot.channelName,
       title: openTitle,
       author: openRoot.author,
     });
-  }, [environmentId, openRoot, openTitle]);
+  }, [boardKey, openRoot, openTitle]);
 
   const updateSearch = (update: Partial<Omit<typeof search, "environmentId">>) => {
     void navigate({
       to: "/boards",
-      search: { ...search, ...(environmentId === null ? {} : { environmentId }), ...update },
+      search: {
+        ...search,
+        ...(environmentId === null ? {} : { environmentId }),
+        ...(boardTreeId === null ? {} : { boardTreeId }),
+        ...update,
+      },
     });
   };
   const runAction = async (action: () => Promise<unknown>) => {
@@ -216,6 +262,10 @@ export function useBoardsViewModel(): BoardsViewModel {
   };
   return {
     environmentId,
+    boardTreeId,
+    boardTrees,
+    onSelectBoardTree: (id) =>
+      updateSearch({ boardTreeId: id, channel: undefined, thread: undefined }),
     channels,
     canManageHandling,
     handlingAgents: availableHandlingAgents,
@@ -228,6 +278,7 @@ export function useBoardsViewModel(): BoardsViewModel {
       runAction(async () => {
         if (
           environmentId === null ||
+          boardTreeId === null ||
           selectedChannelName === null ||
           !page?.nextCursor ||
           loadingMore.current
@@ -240,6 +291,7 @@ export function useBoardsViewModel(): BoardsViewModel {
             environmentId,
             input: {
               channelName: selectedChannelName,
+              boardTreeId,
               sort: threadSort,
               limit: 30,
               cursor: page.nextCursor,
@@ -294,30 +346,28 @@ export function useBoardsViewModel(): BoardsViewModel {
     tabs,
     onSelectTab: (tab) => updateSearch({ channel: tab.channelName, thread: tab.rootId }),
     onCloseTab: (rootId) => {
-      if (environmentId === null) return;
+      if (boardKey === null) return;
       if (rootId === selectedRootId) {
         const next = boardTabAfterClosing(tabs, rootId);
         updateSearch({ channel: next?.channelName, thread: next?.rootId });
       }
-      useBoardViewStore.getState().closeTab(environmentId, rootId);
+      useBoardViewStore.getState().closeTab(boardKey, rootId);
     },
     onMoveTab: (rootId, toIndex) => {
-      if (environmentId !== null)
-        useBoardViewStore.getState().moveTab(environmentId, rootId, toIndex);
+      if (boardKey !== null) useBoardViewStore.getState().moveTab(boardKey, rootId, toIndex);
     },
     collapsedChannels,
     onToggleChannel: (channelName) => {
-      if (environmentId !== null)
-        useBoardViewStore.getState().toggleChannel(environmentId, channelName);
+      if (boardKey !== null) useBoardViewStore.getState().toggleChannel(boardKey, channelName);
     },
     onShowAllChannels: () => updateSearch({ channel: undefined, thread: undefined }),
     onMarkChannelRead: (channelName) =>
       runAction(async () => {
-        if (environmentId === null) throw new Error("Connect to an environment first.");
+        if (environmentId === null || boardTreeId === null) return;
         requireSuccess(
           await messageBoardAtoms.markRead.run(appAtomRegistry, {
             environmentId,
-            input: { channelName },
+            input: { channelName, boardTreeId },
           }),
         );
       }),
@@ -326,7 +376,10 @@ export function useBoardsViewModel(): BoardsViewModel {
       if (environmentId === null) throw new Error("Connect to an environment first.");
       try {
         const { post } = requireSuccess(
-          await messageBoardAtoms.post.run(appAtomRegistry, { environmentId, input }),
+          await messageBoardAtoms.post.run(appAtomRegistry, {
+            environmentId,
+            input: { ...input, ...(boardTreeId === null ? {} : { boardTreeId }) },
+          }),
         );
         if (post.rootId !== selectedRootId)
           updateSearch({ channel: post.channelName, thread: post.rootId });

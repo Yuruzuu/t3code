@@ -243,15 +243,20 @@ const makeShared = Effect.gen(function* () {
         } else {
           const roots = yield* sql<{
             channel_name: string;
+            channel_label: string;
+            board_tree_id: string | null;
             latest: string;
-          }>`SELECT channel_name,(SELECT MAX(created_at) FROM board_posts WHERE root_id=${input.selection.rootId}) AS latest FROM board_posts WHERE id=${input.selection.rootId}`;
+          }>`SELECT channel_name,substr(channel_name, instr(channel_name, '/') + 1) AS channel_label,(SELECT board_tree_id FROM board_channels WHERE name = channel_name) AS board_tree_id,(SELECT MAX(created_at) FROM board_posts WHERE root_id=${input.selection.rootId}) AS latest FROM board_posts WHERE id=${input.selection.rootId}`;
           const acknowledgementAt = DateTime.formatIso(
             DateTime.makeUnsafe(Math.max(Date.parse(now), Date.parse(roots[0]!.latest) + 1)),
           );
           acknowledgement = yield* decodePost({
             id: `board-availability:${input.selection.id}:${input.selection.generation}`,
             rootId: input.selection.rootId,
-            channelName: roots[0]!.channel_name,
+            channelName: roots[0]!.channel_label,
+            ...(roots[0]!.board_tree_id === null
+              ? {}
+              : { boardTreeId: ThreadId.make(roots[0]!.board_tree_id) }),
             author: { kind: "system" },
             text:
               reason === "no-eligible"
@@ -259,7 +264,7 @@ const makeShared = Effect.gen(function* () {
                 : "An automatic reply could not be scheduled. The request remains unresolved.",
             createdAt: acknowledgementAt,
           });
-          yield* sql`INSERT INTO board_posts(id,root_id,channel_name,author_json,text,created_at) VALUES(${acknowledgement.id},${acknowledgement.rootId},${acknowledgement.channelName},${encodeJson({ kind: "system" })},${acknowledgement.text},${acknowledgementAt}) ON CONFLICT DO NOTHING`;
+          yield* sql`INSERT INTO board_posts(id,root_id,channel_name,author_json,text,created_at) VALUES(${acknowledgement.id},${acknowledgement.rootId},${roots[0]!.channel_name},${encodeJson({ kind: "system" })},${acknowledgement.text},${acknowledgementAt}) ON CONFLICT DO NOTHING`;
         }
         yield* handling.bump(input.selection.rootId);
         return { changed: true, acknowledgement };

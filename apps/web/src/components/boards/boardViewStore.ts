@@ -1,5 +1,5 @@
 import { arrayMove } from "@dnd-kit/sortable";
-import type { BoardAuthor, BoardPostId, EnvironmentId } from "@t3tools/contracts";
+import type { BoardAuthor, BoardPostId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -37,57 +37,52 @@ export function boardTabAfterClosing(tabs: readonly BoardTab[], rootId: BoardPos
 }
 
 interface BoardViewStoreState {
-  tabsByEnvironment: Record<string, readonly BoardTab[]>;
-  collapsedChannelsByEnvironment: Record<string, readonly string[]>;
-  openTab: (environmentId: EnvironmentId, tab: BoardTab) => void;
-  closeTab: (environmentId: EnvironmentId, rootId: BoardPostId) => void;
-  moveTab: (environmentId: EnvironmentId, rootId: BoardPostId, toIndex: number) => void;
-  toggleChannel: (environmentId: EnvironmentId, channelName: string) => void;
+  tabsByBoard: Record<string, readonly BoardTab[]>;
+  collapsedChannelsByBoard: Record<string, readonly string[]>;
+  openTab: (boardKey: string, tab: BoardTab) => void;
+  closeTab: (boardKey: string, rootId: BoardPostId) => void;
+  moveTab: (boardKey: string, rootId: BoardPostId, toIndex: number) => void;
+  toggleChannel: (boardKey: string, channelName: string) => void;
 }
 
 const noTabs: readonly BoardTab[] = [];
 const noChannels: readonly string[] = [];
 
-export const selectBoardTabs =
-  (environmentId: EnvironmentId | null) => (state: BoardViewStoreState) =>
-    environmentId === null ? noTabs : (state.tabsByEnvironment[environmentId] ?? noTabs);
+export const selectBoardTabs = (boardKey: string | null) => (state: BoardViewStoreState) =>
+  boardKey === null ? noTabs : (state.tabsByBoard[boardKey] ?? noTabs);
 
-export const selectCollapsedChannels =
-  (environmentId: EnvironmentId | null) => (state: BoardViewStoreState) =>
-    environmentId === null
-      ? noChannels
-      : (state.collapsedChannelsByEnvironment[environmentId] ?? noChannels);
+export const selectCollapsedChannels = (boardKey: string | null) => (state: BoardViewStoreState) =>
+  boardKey === null ? noChannels : (state.collapsedChannelsByBoard[boardKey] ?? noChannels);
 
 export const useBoardViewStore = create<BoardViewStoreState>()(
   persist(
     (set) => {
       const updateTabs = (
-        environmentId: EnvironmentId,
+        boardKey: string,
         update: (tabs: readonly BoardTab[]) => readonly BoardTab[],
       ) =>
         set((state) => {
-          const tabs = state.tabsByEnvironment[environmentId] ?? noTabs;
+          const tabs = state.tabsByBoard[boardKey] ?? noTabs;
           const next = update(tabs);
           return next === tabs
             ? state
-            : { tabsByEnvironment: { ...state.tabsByEnvironment, [environmentId]: next } };
+            : { tabsByBoard: { ...state.tabsByBoard, [boardKey]: next } };
         });
       return {
-        tabsByEnvironment: {},
-        collapsedChannelsByEnvironment: {},
-        openTab: (environmentId, tab) =>
-          updateTabs(environmentId, (tabs) => upsertBoardTab(tabs, tab)),
-        closeTab: (environmentId, rootId) =>
-          updateTabs(environmentId, (tabs) => tabs.filter((tab) => tab.rootId !== rootId)),
-        moveTab: (environmentId, rootId, toIndex) =>
-          updateTabs(environmentId, (tabs) => moveBoardTab(tabs, rootId, toIndex)),
-        toggleChannel: (environmentId, channelName) =>
+        tabsByBoard: {},
+        collapsedChannelsByBoard: {},
+        openTab: (boardKey, tab) => updateTabs(boardKey, (tabs) => upsertBoardTab(tabs, tab)),
+        closeTab: (boardKey, rootId) =>
+          updateTabs(boardKey, (tabs) => tabs.filter((tab) => tab.rootId !== rootId)),
+        moveTab: (boardKey, rootId, toIndex) =>
+          updateTabs(boardKey, (tabs) => moveBoardTab(tabs, rootId, toIndex)),
+        toggleChannel: (boardKey, channelName) =>
           set((state) => {
-            const collapsed = state.collapsedChannelsByEnvironment[environmentId] ?? noChannels;
+            const collapsed = state.collapsedChannelsByBoard[boardKey] ?? noChannels;
             return {
-              collapsedChannelsByEnvironment: {
-                ...state.collapsedChannelsByEnvironment,
-                [environmentId]: collapsed.includes(channelName)
+              collapsedChannelsByBoard: {
+                ...state.collapsedChannelsByBoard,
+                [boardKey]: collapsed.includes(channelName)
                   ? collapsed.filter((name) => name !== channelName)
                   : [...collapsed, channelName],
               },
@@ -96,8 +91,8 @@ export const useBoardViewStore = create<BoardViewStoreState>()(
       };
     },
     {
-      name: "t3code:board-view:v1",
-      version: 1,
+      name: "t3code:board-view:v2",
+      version: 2,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),

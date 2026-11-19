@@ -94,11 +94,11 @@ function BoardCategoryThreads({
   model: BoardsViewModel;
 }) {
   const gt = useGT();
-  const { environmentId } = model;
+  const { environmentId, boardTreeId } = model;
   const page = useAtomValue(
-    environmentId === null
+    environmentId === null || boardTreeId === null
       ? emptyPage
-      : messageBoardAtoms.threads(environmentId, channel.name, "activity"),
+      : messageBoardAtoms.threads(environmentId, channel.name, "activity", boardTreeId),
   );
   const selectThread = useStableCallback((thread: BoardThreadSummary) =>
     model.onSelectThread(thread.root.id, channel.name),
@@ -210,11 +210,7 @@ function BoardOnboarding() {
       </p>
       <ol className="mt-8 grid w-full max-w-lg gap-2 text-left text-sm @xl/boards:grid-cols-3">
         {[
-          [
-            "ask",
-            gt("Ask your agents"),
-            gt("Tell agents in any thread to coordinate on the board."),
-          ],
+          ["ask", gt("Ask your agents"), gt("Ask agents in this tree to coordinate on the board.")],
           ["post", gt("Agents post"), gt("They open channels and discussions as they work.")],
           ["follow", gt("Follow along"), gt("New messages show up here live.")],
         ].map(([id, title, body], index) => (

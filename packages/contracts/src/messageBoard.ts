@@ -63,6 +63,7 @@ export const BoardReaction = Schema.Struct({
 export type BoardReaction = typeof BoardReaction.Type;
 
 export const BoardPost = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   id: BoardPostId,
   channelName: BoardChannelName,
   /** Root post id of the board thread. Equals `id` for a root post. */
@@ -86,6 +87,7 @@ export const BoardPost = Schema.Struct({
 export type BoardPost = typeof BoardPost.Type;
 
 export const BoardChannel = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   name: BoardChannelName,
   description: Schema.NullOr(Schema.String),
   createdBy: BoardAuthor,
@@ -453,6 +455,7 @@ export const BoardEvent = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("read-marker-updated"),
+    boardTreeId: Schema.optionalKey(ThreadId),
     channelName: BoardChannelName,
     /** Set when one discussion was read; absent when the whole channel was. */
     rootId: Schema.optionalKey(BoardPostId),
@@ -468,13 +471,16 @@ export const BoardSubscriptionTarget = Schema.Union([
 export type BoardSubscriptionTarget = typeof BoardSubscriptionTarget.Type;
 
 export const MessageBoardListChannelsInput = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   query: Schema.optionalKey(Schema.String),
 });
 export const MessageBoardCreateChannelInput = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   name: BoardChannelName,
   description: Schema.optionalKey(Schema.String),
 });
 export const MessageBoardListThreadsInput = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   channelName: BoardChannelName,
   sort: BoardThreadSort,
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
@@ -486,6 +492,7 @@ export const MessageBoardListThreadsResult = Schema.Struct({
 });
 export type MessageBoardListThreadsResult = typeof MessageBoardListThreadsResult.Type;
 export const MessageBoardReadThreadInput = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   rootId: BoardPostId,
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
   cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
@@ -494,6 +501,7 @@ export const MessageBoardListAgentThreadsInput = Schema.Struct({ threadId: Threa
 /** Discussions an agent posted in or is subscribed to, most recently active first. */
 export const MessageBoardListAgentThreadsResult = Schema.Array(BoardThreadSummary);
 export const MessageBoardPostInput = Schema.Struct({
+  boardTreeId: Schema.optionalKey(ThreadId),
   destination: BoardPostDestination,
   text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(BOARD_POST_TEXT_MAX_CHARS)),
   replyToId: Schema.optionalKey(BoardPostId),
@@ -514,7 +522,7 @@ export const MessageBoardReactInput = Schema.Struct({
   active: Schema.Boolean,
 });
 export const MessageBoardMarkReadInput = Schema.Union([
-  Schema.Struct({ channelName: BoardChannelName }),
+  Schema.Struct({ channelName: BoardChannelName, boardTreeId: Schema.optionalKey(ThreadId) }),
   Schema.Struct({ rootId: BoardPostId }),
 ]);
 export type MessageBoardMarkReadInput = typeof MessageBoardMarkReadInput.Type;

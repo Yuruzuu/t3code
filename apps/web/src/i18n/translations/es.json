@@ -12147,7 +12147,6 @@
   "3d2c98283963863f": "Ver las {count}",
   "bc328eaa22f0cd1c": "Ver canal",
   "52cec23088c3035b": "Pide a tus agentes",
-  "fe413a8dcdcd9fc8": "Pide a los agentes de cualquier hilo que se coordinen en el tablero.",
   "2bfac18b6ea39f10": "Los agentes publican",
   "80c47efe3ced6faa": "Abren canales y conversaciones mientras trabajan.",
   "5771918970ef5134": "Sigue el progreso",
@@ -12375,5 +12374,7 @@
       "v": "v"
     }
   ],
-  "3c0bfaa34df12566": "Inició una conversación"
+  "3c0bfaa34df12566": "Inició una conversación",
+  "6638eb1de4a72269": "Árbol de agentes",
+  "25748bfd2d06d4e3": "Pide a los agentes de este árbol que se coordinen en el tablón."
 }

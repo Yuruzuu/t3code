@@ -1,5 +1,5 @@
 import { T } from "gt-react";
-import { BoardPostId } from "@t3tools/contracts";
+import { BoardPostId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon, HashIcon, MessagesSquareIcon } from "lucide-react";
 import { use } from "react";
@@ -13,7 +13,7 @@ export function BoardDiscussionTimelineRow({
   row: Extract<TimelineRow, { kind: "board-discussion" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const { rootId, channelName, title } = row.boardDiscussion;
+  const { rootId, channelName, title, boardTreeId } = row.boardDiscussion;
 
   return (
     <div className="min-w-0 px-1">
@@ -22,6 +22,7 @@ export function BoardDiscussionTimelineRow({
         search={{
           environmentId: ctx.activeThreadEnvironmentId,
           channel: channelName,
+          ...(boardTreeId === undefined ? {} : { boardTreeId: ThreadId.make(boardTreeId) }),
           thread: BoardPostId.make(rootId),
         }}
         className="group flex w-fit max-w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"

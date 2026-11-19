@@ -32,6 +32,9 @@ export function ThreadBoardsPanel(props: {
       to: "/boards",
       search: {
         environmentId: props.environmentId,
+        ...(discussions[0]?.root.boardTreeId === undefined
+          ? {}
+          : { boardTreeId: discussions[0].root.boardTreeId }),
         ...(summary ? { channel: summary.root.channelName, thread: summary.root.id } : {}),
       },
     });
