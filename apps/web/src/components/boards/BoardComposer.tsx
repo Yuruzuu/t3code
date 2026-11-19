@@ -1,4 +1,5 @@
 import { BOARD_POST_TEXT_MAX_CHARS, type BoardAuthor, type BoardPost } from "@t3tools/contracts";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { ArrowUpIcon, CornerUpLeftIcon, XIcon } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { collectBoardMentions } from "@t3tools/shared/boardMentions";
@@ -45,6 +46,8 @@ export function BoardComposer({
     mode: "request" | "note" | "reopen-and-send",
   ) => Promise<void>;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const id = useId();
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const pendingRequest = useRef<{
@@ -63,26 +66,26 @@ export function BoardComposer({
     const mention = collectBoardMentions(`@${path}`)[0];
     const matches = agents.filter((candidate) =>
       mention?.threadId === undefined
-        ? boardAuthorName(candidate).toLowerCase() === path.toLowerCase()
+        ? boardAuthorName(candidate, m).toLowerCase() === path.toLowerCase()
         : candidate.threadId === mention.threadId,
     );
     const agent = matches.length === 1 ? matches[0] : undefined;
     return agent ? (
-      <BoardMentionLabel threadId={agent.threadId} label={`@${boardAuthorName(agent)}`} />
+      <BoardMentionLabel threadId={agent.threadId} label={`@${boardAuthorName(agent, m)}`} />
     ) : null;
   };
   const suggestions =
     query === undefined
       ? []
       : agents
-          .filter((agent) => boardAuthorName(agent).toLowerCase().startsWith(query))
+          .filter((agent) => boardAuthorName(agent, m).toLowerCase().startsWith(query))
           .slice(0, MAX_SUGGESTIONS);
 
   function insertMention(agent: AgentAuthor) {
     const next = insertBoardMention(
       prompt.value,
       prompt.cursor,
-      boardAuthorName(agent),
+      boardAuthorName(agent, m),
       agent.threadId,
     );
     setPrompt(next);
@@ -111,7 +114,7 @@ export function BoardComposer({
         if (pendingRequest.current === request) pendingRequest.current = null;
       },
       (cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : "Couldn't send. Try again.");
+        setError(cause instanceof Error ? cause.message : gt("Couldn't send. Try again."));
         setPrompt((current) => {
           const value = current.value.trim() ? `${text}\n\n${current.value}` : text;
           return { value, cursor: value.length, suppressMentionQuery: false };
@@ -122,7 +125,7 @@ export function BoardComposer({
 
   return (
     <form
-      aria-label="Reply to this discussion"
+      aria-label={gt("Reply to this discussion")}
       onSubmit={(event) => {
         event.preventDefault();
         send();
@@ -130,7 +133,7 @@ export function BoardComposer({
     >
       {suggestions.length > 0 && (
         <ul
-          aria-label="Mention an agent"
+          aria-label={gt("Mention an agent")}
           className="mb-2 w-full min-w-0 rounded-lg border border-border bg-popover p-1 shadow-md"
         >
           {suggestions.map((agent) => (
@@ -159,17 +162,21 @@ export function BoardComposer({
             {replyTo && (
               <div className="flex min-w-0 items-center gap-1.5 border-b border-border/60 py-1.5 pr-1.5 pl-4 text-xs text-muted-foreground">
                 <CornerUpLeftIcon aria-hidden="true" className="size-3 shrink-0" />
-                <span className="shrink-0">Replying to</span>
-                <span className="shrink-0 font-medium text-foreground/90">
-                  <BoardAuthorLabel author={replyTo.author} />
-                </span>
+                <T>
+                  <span className="shrink-0">Replying to</span>{" "}
+                  <span className="shrink-0 font-medium text-foreground/90">
+                    <Var>
+                      <BoardAuthorLabel author={replyTo.author} />
+                    </Var>
+                  </span>
+                </T>
                 <span className="min-w-0 flex-1 truncate">
                   {boardPostExcerpt(replyTo.text, { includeFirstLine: true })}
                 </span>
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Cancel reply"
+                  aria-label={gt("Cancel reply")}
                   onClick={onCancelReply}
                 >
                   <XIcon aria-hidden="true" />
@@ -181,7 +188,7 @@ export function BoardComposer({
                 <ComposerPromptEditor
                   draftKey={id}
                   editorRef={editorRef}
-                  ariaLabel="Reply"
+                  ariaLabel={gt("Reply", { $context: "Compose a reply to a board discussion" })}
                   value={prompt.value}
                   cursor={prompt.cursor}
                   richTextEnabled={richTextEnabled}
@@ -191,7 +198,9 @@ export function BoardComposer({
                   skills={[]}
                   disabled={disabled}
                   placeholder={
-                    disabled ? "Reconnect to reply" : "Reply to this discussion… @ to mention"
+                    disabled
+                      ? gt("Reconnect to reply")
+                      : gt("Reply to this discussion… @ to mention")
                   }
                   className="min-h-6"
                   onChange={(value, cursor, _expandedCursor, suppressMentionQuery) =>
@@ -215,7 +224,7 @@ export function BoardComposer({
                   variant="composer-send"
                   size="composer-send"
                   disabled={!canSend}
-                  aria-label="Send reply"
+                  aria-label={gt("Send reply")}
                 >
                   <ArrowUpIcon aria-hidden="true" />
                 </Button>
@@ -227,17 +236,19 @@ export function BoardComposer({
       {closed && (
         <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
           <Button type="submit" variant="outline" size="xs" disabled={!canSend}>
-            Reopen and send
+            <T>Reopen and send</T>
           </Button>
           <Button variant="ghost" size="xs" disabled={!canSend} onClick={() => send("note")}>
-            Add note
+            <T>Add note</T>
           </Button>
         </div>
       )}
       {(error || tooLong) && (
         <p role="alert" className="mt-2 text-xs text-destructive-foreground">
           {error ??
-            `Keep your reply under ${BOARD_POST_TEXT_MAX_CHARS.toLocaleString()} characters.`}
+            gt("Keep your reply under {count} characters.", {
+              count: BOARD_POST_TEXT_MAX_CHARS.toLocaleString(),
+            })}
         </p>
       )}
     </form>

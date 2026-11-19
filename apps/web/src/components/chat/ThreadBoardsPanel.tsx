@@ -1,3 +1,4 @@
+import { T, useGT, useMessages, Var } from "gt-react";
 import type { BoardThreadSummary, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
@@ -16,6 +17,8 @@ export function ThreadBoardsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const navigate = useNavigate();
   const query = useEnvironmentQuery(
     messageBoardAtoms.agentThreads(props.environmentId, props.threadId),
@@ -36,19 +39,21 @@ export function ThreadBoardsPanel(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-boards-heading"
-      title="Boards"
+      title={gt("Boards")}
       data-thread-boards-panel
       actions={
         discussions.length > VISIBLE_DISCUSSIONS ? (
           <ThreadDetailsControl part="meta" onClick={() => open(null)}>
-            View all
+            <T>View all</T>
           </ThreadDetailsControl>
         ) : null
       }
     >
       {query.error !== null ? (
         <p className="px-2.5 py-1.5 text-2xs text-destructive">
-          Could not load board discussions: {query.error}
+          <T>
+            Could not load board discussions: <Var>{query.error}</Var>
+          </T>
         </p>
       ) : null}
 
@@ -58,15 +63,22 @@ export function ThreadBoardsPanel(props: {
             key={summary.root.id}
             multiline
             onClick={() => open(summary)}
-            aria-label={`Open discussion ${boardMainPostContent(summary.root).title}`}
+            aria-label={gt("Open discussion {title}", {
+              title: boardMainPostContent(summary.root, resolve).title,
+            })}
           >
             <MessagesSquareIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate">{boardMainPostContent(summary.root).title}</span>
+              <span className="block truncate">
+                {boardMainPostContent(summary.root, resolve).title}
+              </span>
               <DiscussionMeta summary={summary} />
             </span>
             {summary.unread ? (
-              <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="Unread" />
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-primary"
+                aria-label={gt("Unread")}
+              />
             ) : null}
           </ThreadDetailsControl>
         ))}
@@ -76,9 +88,11 @@ export function ThreadBoardsPanel(props: {
 }
 
 function DiscussionMeta({ summary }: { summary: BoardThreadSummary }) {
+  const gt = useGT();
   const relative = useRelativeTimeState(summary.lastActivityAt);
-  const replies =
-    summary.replyCount === 1 ? "1 reply" : `${summary.replyCount.toLocaleString()} replies`;
+  const replies = gt("{count, plural, one {1 reply} other {{count} replies}}", {
+    count: summary.replyCount,
+  });
   const when =
     relative.status === "relative"
       ? [relative.value, relative.suffix].filter(Boolean).join(" ")

@@ -1,4 +1,5 @@
 import type { BoardAuthor, BoardPost, BoardResponsibility } from "@t3tools/contracts";
+import { msg, T, useGT, useLocale, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "../ui/button";
@@ -7,13 +8,31 @@ import type { BoardsViewModel } from "./boardsViewModel";
 
 type Agent = Extract<BoardAuthor, { kind: "agent" }>;
 
-const statusLabels: Record<BoardResponsibility["status"], string> = {
-  pending: "Pending",
-  queued: "Queued",
-  running: "Handling",
-  held: "Paused",
-  completed: "Handled",
-  "needs-attention": "Needs attention",
+const statusLabels = {
+  pending: msg("Pending"),
+  queued: msg("Queued"),
+  running: msg("Handling"),
+  held: msg("Paused"),
+  completed: msg("Handled"),
+  "needs-attention": msg("Needs attention"),
+} satisfies Record<BoardResponsibility["status"], ReturnType<typeof msg>>;
+
+const availabilityLabels = {
+  "parent-stopped": msg("Parent stopped"),
+  stopped: msg("Stopped"),
+  archived: msg("Recipient archived"),
+  deleted: msg("Recipient deleted"),
+  missing: msg("Recipient not found"),
+  unavailable: msg("Recipient unavailable"),
+};
+
+const availabilityDescriptions = {
+  "parent-stopped": msg("The recipient's parent is stopped."),
+  stopped: msg("Recipient stopped."),
+  archived: msg("Recipient archived."),
+  deleted: msg("Recipient deleted."),
+  missing: msg("Recipient missing."),
+  unavailable: msg("Recipient unavailable."),
 };
 
 export function BoardHandlingLine({
@@ -25,6 +44,9 @@ export function BoardHandlingLine({
   model: BoardsViewModel;
   agents: readonly Agent[];
 }) {
+  const gt = useGT();
+  const locale = useLocale();
+  const m = useMessages();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   if (post.author.kind !== "user" || model.thread?.handling === undefined) return null;
@@ -41,7 +63,7 @@ export function BoardHandlingLine({
   if (requests.length === 0 && selection?.status === "unavailable")
     return (
       <span role="status" className="text-2xs text-muted-foreground">
-        No participant is currently available. Your message is saved.
+        <T>No participant is currently available. Your message is saved.</T>
       </span>
     );
   if (requests.length === 0) return null;
@@ -52,7 +74,9 @@ export function BoardHandlingLine({
       await action();
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "The request changed. Review it and try again.",
+        cause instanceof Error
+          ? cause.message
+          : gt("The request changed. Review it and try again."),
       );
     } finally {
       setPending(false);
@@ -61,27 +85,24 @@ export function BoardHandlingLine({
   const counts = new Map<string, number>();
   for (const request of requests) {
     const label =
-      request.availabilityReason === "parent-stopped"
-        ? "Parent stopped"
-        : request.availabilityReason === "stopped"
-          ? "Stopped"
-          : request.availabilityReason === "archived"
-            ? "Recipient archived"
-            : request.availabilityReason === "deleted"
-              ? "Recipient deleted"
-              : request.availabilityReason === "missing"
-                ? "Recipient not found"
-                : request.availabilityReason === "unavailable"
-                  ? "Recipient unavailable"
-                  : request.recipientThreadId === null
-                    ? "Needs assignment"
-                    : statusLabels[request.status];
+      request.availabilityReason !== undefined
+        ? m(availabilityLabels[request.availabilityReason])
+        : request.recipientThreadId === null
+          ? gt("Needs assignment")
+          : m(statusLabels[request.status]);
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return (
     <details className="text-2xs text-muted-foreground">
       <summary className="cursor-pointer">
-        {[...counts].map(([label, count]) => `${count} ${label.toLowerCase()}`).join(" · ")}
+        {[...counts]
+          .map(([label, count]) =>
+            gt("{count} {status}", {
+              count,
+              status: label.toLocaleLowerCase(locale),
+            }),
+          )
+          .join(" · ")}
       </summary>
       <ul className="mt-2 space-y-2">
         {requests.map((request) => {
@@ -90,16 +111,17 @@ export function BoardHandlingLine({
             <li key={request.id} className="flex flex-wrap items-center gap-2">
               <span>
                 {request.recipientThreadId === null
-                  ? "Needs assignment"
-                  : `${recipient ? boardAuthorName(recipient) : request.recipientThreadId} · ${statusLabels[request.status]}`}
+                  ? gt("Needs assignment")
+                  : gt("{recipient} · {status}", {
+                      recipient: recipient
+                        ? boardAuthorName(recipient, m)
+                        : request.recipientThreadId,
+                      status: m(statusLabels[request.status]),
+                    })}
               </span>
               {request.outcome && <span>{request.outcome.text}</span>}
               {request.availabilityReason && (
-                <span>
-                  {request.availabilityReason === "parent-stopped"
-                    ? "The recipient's parent is stopped."
-                    : `Recipient ${request.availabilityReason}.`}
-                </span>
+                <span>{m(availabilityDescriptions[request.availabilityReason])}</span>
               )}
               {model.canManageHandling && request.status !== "completed" && (
                 <>
@@ -111,7 +133,7 @@ export function BoardHandlingLine({
                         disabled={pending || !model.isConnected}
                         onClick={() => void run(() => model.onResumeRequest(request))}
                       >
-                        Resume this request
+                        <T>Resume this request</T>
                       </Button>
                     )}
                   {request.selectionId === undefined && (
@@ -129,19 +151,19 @@ export function BoardHandlingLine({
                     >
                       <select
                         name="recipient"
-                        aria-label="Reassign this request to"
+                        aria-label={gt("Reassign this request to")}
                         defaultValue={request.recipientThreadId ?? ""}
                         disabled={pending || !model.isConnected}
                         className="max-w-40 rounded border border-border bg-background p-1"
                       >
                         {!recipient && (
                           <option value={request.recipientThreadId ?? ""}>
-                            {request.recipientThreadId ?? "Select an agent"}
+                            {request.recipientThreadId ?? gt("Select an agent")}
                           </option>
                         )}
                         {agents.map((agent) => (
                           <option key={agent.threadId} value={agent.threadId}>
-                            {boardAuthorName(agent)} · {agent.title || agent.threadId}
+                            {boardAuthorName(agent, m)} · {agent.title || agent.threadId}
                           </option>
                         ))}
                       </select>
@@ -151,7 +173,9 @@ export function BoardHandlingLine({
                         size="xs"
                         disabled={pending || !model.isConnected}
                       >
-                        {request.recipientThreadId === null ? "Assign request" : "Reassign request"}
+                        {request.recipientThreadId === null
+                          ? gt("Assign request")
+                          : gt("Reassign request")}
                       </Button>
                     </form>
                   )}
@@ -176,6 +200,7 @@ export function BoardHandlingControls({
   model: BoardsViewModel;
   agents: readonly Agent[];
 }) {
+  const gt = useGT();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const handling = model.thread?.handling;
@@ -187,7 +212,9 @@ export function BoardHandlingControls({
       await action();
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "The discussion changed. Review it and try again.",
+        cause instanceof Error
+          ? cause.message
+          : gt("The discussion changed. Review it and try again."),
       );
     } finally {
       setPending(false);
@@ -196,7 +223,11 @@ export function BoardHandlingControls({
   return (
     <div className="mt-3 space-y-2 text-xs text-muted-foreground">
       <div className="flex flex-wrap items-center gap-2">
-        <span>{handling.lifecycle === "closed" ? "Closed" : "Open"}</span>
+        <span>
+          {handling.lifecycle === "closed"
+            ? gt("Closed", { $context: "Discussion state" })
+            : gt("Open", { $context: "Discussion state" })}
+        </span>
         {model.canManageHandling && (
           <Button
             variant="ghost"
@@ -210,7 +241,7 @@ export function BoardHandlingControls({
               )
             }
           >
-            {handling.lifecycle === "closed" ? "Reopen discussion" : "Close discussion"}
+            {handling.lifecycle === "closed" ? gt("Reopen discussion") : gt("Close discussion")}
           </Button>
         )}
       </div>

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { BoardReaction } from "@t3tools/contracts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
 import { SmilePlusIcon } from "lucide-react";
@@ -10,9 +11,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const QUICK_REACTIONS = ["👍", "✅", "👀", "🎉", "❤️", "😄"] as const;
 
-function reactorNames(reaction: BoardReaction) {
+function reactorNames(reaction: BoardReaction, you: string) {
   return reaction.by
-    .map((viewer) => (viewer.kind === "user" ? "You" : boardPersona(viewer.threadId).name))
+    .map((viewer) => (viewer.kind === "user" ? you : boardPersona(viewer.threadId).name))
     .join(", ");
 }
 
@@ -27,8 +28,9 @@ export const BoardReactionPills = memo(function BoardReactionPills({
   reactions: readonly BoardReaction[];
   onToggle: (emoji: string, active: boolean) => void;
 }) {
+  const gt = useGT();
   return (
-    <ul aria-label="Reactions" className="flex flex-wrap gap-1">
+    <ul aria-label={gt("Reactions")} className="flex flex-wrap gap-1">
       {reactions.map((reaction) => {
         const mine = reactedByYou(reaction);
         return (
@@ -39,7 +41,11 @@ export const BoardReactionPills = memo(function BoardReactionPills({
                   <button
                     type="button"
                     aria-pressed={mine}
-                    aria-label={`${reaction.emoji} ${reaction.by.length}, from ${reactorNames(reaction)}`}
+                    aria-label={gt("{emoji} {count}, from {names}", {
+                      emoji: reaction.emoji,
+                      count: reaction.by.length,
+                      names: reactorNames(reaction, gt("You")),
+                    })}
                     onClick={() => onToggle(reaction.emoji, !mine)}
                     className={cn(
                       "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
@@ -53,7 +59,7 @@ export const BoardReactionPills = memo(function BoardReactionPills({
                 <span aria-hidden="true">{reaction.emoji}</span>
                 <span aria-hidden="true">{reaction.by.length}</span>
               </TooltipTrigger>
-              <TooltipPopup>{reactorNames(reaction)}</TooltipPopup>
+              <TooltipPopup>{reactorNames(reaction, gt("You"))}</TooltipPopup>
             </Tooltip>
           </li>
         );
@@ -69,14 +75,17 @@ export function BoardReactionPicker({
   reactions: readonly BoardReaction[];
   onToggle: (emoji: string, active: boolean) => void;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Add reaction" />}>
+      <PopoverTrigger
+        render={<Button variant="ghost" size="icon-sm" aria-label={gt("Add reaction")} />}
+      >
         <SmilePlusIcon aria-hidden="true" />
       </PopoverTrigger>
       <PopoverPopup align="end" className="w-auto">
-        <ul aria-label="Pick a reaction" className="flex gap-0.5">
+        <ul aria-label={gt("Pick a reaction")} className="flex gap-0.5">
           {QUICK_REACTIONS.map((emoji) => {
             const mine = reactions.some(
               (reaction) => reaction.emoji === emoji && reactedByYou(reaction),
@@ -86,7 +95,7 @@ export function BoardReactionPicker({
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`React with ${emoji}`}
+                  aria-label={gt("React with {emoji}", { emoji })}
                   aria-pressed={mine}
                   onClick={() => {
                     onToggle(emoji, !mine);

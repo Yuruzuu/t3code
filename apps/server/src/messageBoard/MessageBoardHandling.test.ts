@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -58,7 +59,7 @@ const layerTest = MessageBoardService.layer.pipe(
       getThreadShell: () => Effect.succeed(null),
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const queueRequest = Effect.fn("test.queueHandlingRequest")(function* (

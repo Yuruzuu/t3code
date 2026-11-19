@@ -35,6 +35,7 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as McpSchema from "effect/ai/McpSchema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 
@@ -142,7 +143,8 @@ const GetChannels = Tool.make("board_get_channels", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CreateChannel = Tool.make("board_create_channel", {
   description: "Create a board channel. Subscribes you unless subscribe is false.",
@@ -158,7 +160,8 @@ const CreateChannel = Tool.make("board_create_channel", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const UpsertChannel = Tool.make("board_upsert_channel", {
   description:
@@ -174,7 +177,8 @@ const UpsertChannel = Tool.make("board_upsert_channel", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ListThreads = Tool.make("board_list_threads", {
   description:
@@ -195,7 +199,8 @@ const ListThreads = Tool.make("board_list_threads", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReadThread = Tool.make("board_read_thread", {
   description:
@@ -219,7 +224,8 @@ const ReadThread = Tool.make("board_read_thread", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReadPost = Tool.make("board_read_post", {
   description:
@@ -235,7 +241,8 @@ const ReadPost = Tool.make("board_read_post", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const SearchPosts = Tool.make("board_search_posts", {
   description:
@@ -254,7 +261,8 @@ const SearchPosts = Tool.make("board_search_posts", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const Wait = Tool.make("board_wait", {
   description:
@@ -274,11 +282,12 @@ const Wait = Tool.make("board_wait", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const Post = Tool.make("board_post", {
   description:
-    "Post as the calling thread. Use channel_name for a new discussion or thread_id for a reply. Reuse request_key on retries. Tag @Name[thread-id]; plain @Name must be unique. Subscribes you unless opted out. Notices reach only the intended active turn with non-interrupting steering. Addressing your finished delegate resumes it. Subscriber notices coalesce until read.",
+    "Post as the calling thread. Use channel_name for a new discussion or thread_id for a reply. Reuse request_key on retries. Tag @Name[thread-id]; plain @Name must be unique. Subscribes you unless opted out. Notices reach only the intended active turn with non-interrupting steering. Subscriber notices coalesce within that turn until read.",
   parameters: Schema.Struct({
     ...BoardTargetInput.fields,
     text: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_POST_TEXT_MAX_CHARS)),
@@ -301,7 +310,8 @@ const Post = Tool.make("board_post", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const Append = Tool.make("board_append", {
   description:
@@ -321,7 +331,8 @@ const Append = Tool.make("board_append", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const React = Tool.make("board_react", {
   description:
@@ -338,7 +349,8 @@ const React = Tool.make("board_react", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const todoThread = BoardPostId.annotate({ description: "Board root post id, not a T3 thread id." });
 const assigneeThread = ThreadId.annotate({
@@ -381,7 +393,8 @@ const ReadTodos = Tool.make("board_read_todos", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const TodoAction = Tool.make("board_todo_action", {
   description:
@@ -398,7 +411,8 @@ const TodoAction = Tool.make("board_todo_action", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CreateTodo = Tool.make("board_create_todo", {
   description:
@@ -415,7 +429,8 @@ const CreateTodo = Tool.make("board_create_todo", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const UpdateTodo = Tool.make("board_update_todo", {
   description:
@@ -436,7 +451,8 @@ const UpdateTodo = Tool.make("board_update_todo", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DeleteTodo = Tool.make("board_delete_todo", {
   description:
@@ -449,7 +465,8 @@ const DeleteTodo = Tool.make("board_delete_todo", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const SubscriptionInput = Schema.Struct({
   ...BoardTargetInput.fields,
@@ -470,7 +487,8 @@ const Subscribe = Tool.make("board_subscribe", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const Unsubscribe = Tool.make("board_unsubscribe", {
   description:
@@ -483,7 +501,8 @@ const Unsubscribe = Tool.make("board_unsubscribe", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const SetRole = Tool.make("board_set_role", {
   description:
@@ -498,7 +517,8 @@ const SetRole = Tool.make("board_set_role", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReadHandling = Tool.make("board_read_handling", {
   description:
@@ -511,7 +531,8 @@ const ReadHandling = Tool.make("board_read_handling", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AssignLead = Tool.make("board_assign_lead", {
   description:
@@ -524,7 +545,8 @@ const AssignLead = Tool.make("board_assign_lead", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const UpdateContext = Tool.make("board_update_context", {
   description:
@@ -537,7 +559,8 @@ const UpdateContext = Tool.make("board_update_context", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReassignRequest = Tool.make("board_reassign_request", {
   description:
@@ -550,7 +573,8 @@ const ReassignRequest = Tool.make("board_reassign_request", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ResumeRequest = Tool.make("board_resume_request", {
   description:
@@ -563,7 +587,8 @@ const ResumeRequest = Tool.make("board_resume_request", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReportOutcome = Tool.make("board_report_outcome", {
   description:
@@ -576,7 +601,8 @@ const ReportOutcome = Tool.make("board_report_outcome", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CloseDiscussion = Tool.make("board_close_discussion", {
   description:
@@ -589,7 +615,8 @@ const CloseDiscussion = Tool.make("board_close_discussion", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReopenDiscussion = Tool.make("board_reopen_discussion", {
   description: "Reopen the discussion at the inspected revision. Reopening does not override Stop.",
@@ -601,7 +628,8 @@ const ReopenDiscussion = Tool.make("board_reopen_discussion", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const MessageBoardToolkit = Toolkit.make(
   ReadHandling,

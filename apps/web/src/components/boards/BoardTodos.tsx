@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import type { BoardPostId, BoardTodo } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -19,11 +20,11 @@ type TodoProps = {
 };
 
 const statusLabels = {
-  todo: "Ready",
-  "in-progress": "Working",
-  blocked: "Blocked",
-  done: "Done",
-  cancelled: "Cancelled",
+  todo: msg("Ready"),
+  "in-progress": msg("Working"),
+  blocked: msg("Blocked"),
+  done: msg("Done"),
+  cancelled: msg("Cancelled"),
 };
 
 function TodoStatusIcon({ status }: { status: BoardTodo["status"] }) {
@@ -44,11 +45,15 @@ function TodoStatusIcon({ status }: { status: BoardTodo["status"] }) {
 }
 
 export function BoardTodos({ todos, onJumpTo }: TodoProps) {
+  const gt = useGT();
   const panelId = useId();
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <section aria-label="Discussion todos" className="mb-2 rounded-xl border border-border/60">
+    <section
+      aria-label={gt("Discussion todos")}
+      className="mb-2 rounded-xl border border-border/60"
+    >
       <button
         type="button"
         aria-expanded={expanded}
@@ -56,7 +61,9 @@ export function BoardTodos({ todos, onJumpTo }: TodoProps) {
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs text-muted-foreground outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <span className="shrink-0 font-medium text-foreground">Todos</span>
+        <span className="shrink-0 font-medium text-foreground">
+          <T>Todos</T>
+        </span>
         <span className="min-w-0 flex-1 leading-4 tabular-nums">{todos.length}</span>
         <ChevronDownIcon
           aria-hidden="true"
@@ -70,7 +77,7 @@ export function BoardTodos({ todos, onJumpTo }: TodoProps) {
       >
         {todos.length === 0 ? (
           <p className="px-1.5 py-1.5 text-xs text-muted-foreground">
-            Agents add scoped work here.
+            <T>Agents add scoped work here.</T>
           </p>
         ) : (
           <BoardTodoGroups todos={todos} onJumpTo={onJumpTo} />
@@ -81,10 +88,11 @@ export function BoardTodos({ todos, onJumpTo }: TodoProps) {
 }
 
 export function BoardTodoGroups({ todos, onJumpTo }: TodoProps) {
-  return groupBoardTodos(todos).map((group) => {
+  const resolve = useMessages();
+  return groupBoardTodos(todos, resolve).map((group) => {
     if (group.items.length === 0) return null;
     return (
-      <section key={group.key} aria-label={`${group.label} todos`} className="py-1">
+      <section key={group.key} aria-label={group.label} className="py-1">
         <h4 className="px-1.5 py-1 text-2xs font-medium text-muted-foreground">
           {group.label} <span className="tabular-nums opacity-70">{group.items.length}</span>
         </h4>
@@ -99,6 +107,7 @@ export function BoardTodoGroups({ todos, onJumpTo }: TodoProps) {
 }
 
 function TodoRow({ todo, onJumpTo }: { todo: BoardTodo; onJumpTo: TodoProps["onJumpTo"] }) {
+  const resolve = useMessages();
   const detailsId = useId();
   const [expanded, setExpanded] = useState(false);
   const terminal = todo.status === "done" || todo.status === "cancelled";
@@ -121,7 +130,10 @@ function TodoRow({ todo, onJumpTo }: { todo: BoardTodo; onJumpTo: TodoProps["onJ
         <span className="flex h-4 items-center">
           <TodoStatusIcon status={todo.status} />
           <span className="sr-only">
-            {todo.status === "todo" && todo.assignee ? "Reserved" : statusLabels[todo.status]}:{" "}
+            {todo.status === "todo" && todo.assignee
+              ? resolve(msg("Reserved"))
+              : resolve(statusLabels[todo.status])}
+            :{" "}
           </span>
         </span>
         <span
@@ -164,7 +176,7 @@ function TodoRow({ todo, onJumpTo }: { todo: BoardTodo; onJumpTo: TodoProps["onJ
                   onJumpTo(todo.completion.sourcePostId);
               }}
             >
-              View completion post
+              <T>View completion post</T>
             </a>
           ))}
       </div>

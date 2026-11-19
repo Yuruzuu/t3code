@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { BoardPostId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -60,7 +61,7 @@ const second = ThreadId.make("second");
 const serviceLayer = EffectOutbox.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(HandlingEvents.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const projections = (archived = new Set<string>()) =>
   Layer.mock(ProjectionStore.ProjectionStoreV2)({

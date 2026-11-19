@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -33,6 +34,7 @@ import * as OpenAIDecisionsClient from "./OpenAIDecisionsClient.ts";
 import * as MessageBoardTodoStore from "./MessageBoardTodoStore.ts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
 
+const layerPlatform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
 const user = { kind: "user" } as const;
 const isMessageBoardError = Schema.is(MessageBoardError);
 const threadViewer: BoardViewer = { kind: "thread", threadId: ThreadId.make("thread:board") };
@@ -101,7 +103,7 @@ const layerTest = MessageBoardService.layer.pipe(
       getThreadShell: () => Effect.succeed(null),
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(layerPlatform),
 );
 
 const layerTodoOwners = MessageBoardService.layer.pipe(
@@ -138,7 +140,7 @@ const layerTodoOwners = MessageBoardService.layer.pipe(
       getThreadShell: () => Effect.succeed(null),
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(layerPlatform),
 );
 
 it.effect("keeps a selected existing agent's identity before it joins the channel", () =>
@@ -328,7 +330,7 @@ it.effect(
           Layer.mergeAll(
             Layer.succeed(SqlClient.SqlClient, sql),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
-            NodeServices.layer,
+            layerPlatform,
           ),
         ),
       );
@@ -1080,7 +1082,7 @@ it.effect("unions posting agents and resolvable thread subscribers by latest pos
             getThreadShell: () => Effect.succeed(null),
           }),
         ),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(layerPlatform),
       ),
     ),
   ),
@@ -1515,7 +1517,7 @@ it.effect("adds a set role to the agent byline and clears it with an empty role"
             getThreadShell: () => Effect.succeed(null),
           }),
         ),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(layerPlatform),
       ),
     ),
   ),
@@ -1528,13 +1530,11 @@ type SendResult = Effect.Success<
   ReturnType<ThreadManagementService.ThreadManagementService["Service"]["sendToThread"]>
 >;
 
-/**
- * A board whose agents in `running` have a live turn; every send is recorded in `sent`.
- * `parents` maps a delegated child thread to the thread that started it.
- */
+type Notice = { threadId: ThreadId; mode: string; text: string; targetRunId?: RunId };
+
 const notifyingBoard = (
-  running: ReadonlySet<string>,
-  sent: Array<{ threadId: string; mode: string; text: string }>,
+  running: ReadonlyMap<string, RunId>,
+  sent: Notice[],
   parents: ReadonlyMap<string, string> = new Map(),
 ) =>
   MessageBoardService.layer.pipe(
@@ -1549,7 +1549,7 @@ const notifyingBoard = (
           Effect.succeed({
             projectId: ProjectId.make("project:board"),
             status: running.has(threadId) ? "running" : "idle",
-            activeRunId: running.has(threadId) ? "run" : null,
+            activeRunId: running.get(threadId) ?? null,
             lineage: {
               parentThreadId: parents.get(threadId) ?? null,
               relationshipToParent: parents.has(threadId) ? "subagent" : null,
@@ -1567,20 +1567,24 @@ const notifyingBoard = (
             assert.equal(command.type, "message.dispatch");
             if (command.type === "message.dispatch") {
               assert.isTrue(command.notificationOnly);
-              assert.deepEqual(command.dispatchMode, {
-                type: "steer_active",
-                targetRunId: RunId.make("run"),
+              assert.equal(command.dispatchMode.type, "steer_active");
+              sent.push({
+                threadId: command.threadId,
+                mode: "notify",
+                text: command.text,
+                ...(command.dispatchMode.type === "steer_active" && {
+                  targetRunId: command.dispatchMode.targetRunId,
+                }),
               });
-              sent.push({ threadId: command.threadId, mode: "notify", text: command.text });
             }
             return {} as never;
           }),
       }),
     ),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(layerPlatform),
   );
 
-const agentNamed = (threadId: string): BoardAuthor => ({
+const agentNamed = (threadId: string) => ({
   ...agent,
   threadId: ThreadId.make(threadId),
   title: threadId,
@@ -1589,8 +1593,15 @@ const agentNamed = (threadId: string): BoardAuthor => ({
 it.effect(
   "tells running subscribers and tagged agents on the intended run, never starting idle ones",
   () => {
-    const sent: Array<{ threadId: string; mode: string; text: string }> = [];
+    const sent: Notice[] = [];
     const tagged = "thread:tagged";
+    const activeRun = RunId.make("run:active");
+    const taggedRun = RunId.make("run:tagged");
+    const running = new Map([
+      ["thread:active", activeRun],
+      [tagged, taggedRun],
+      ["thread:board", RunId.make("run:board")],
+    ]);
     return Effect.gen(function* () {
       const board = yield* MessageBoardService.MessageBoardService;
       const general = { kind: "channel", channelName: "general" } as const;
@@ -1612,6 +1623,10 @@ it.effect(
       assert.sameMembers([...result.notifiedThreads], ["thread:tagged", "thread:active"]);
       assert.sameMembers([...result.skippedThreads], ["thread:explicit-idle", "thread:idle"]);
       assert.isTrue(sent.every((item) => item.mode === "notify"));
+      assert.deepEqual(
+        Object.fromEntries(sent.map(({ threadId, targetRunId }) => [threadId, targetRunId])),
+        { "thread:active": activeRun, [tagged]: taggedRun },
+      );
       assert.match(sent.find((item) => item.threadId === tagged)!.text, /^You were mentioned/);
       const replay = yield* board.postAndNotify({
         author: agent,
@@ -1636,17 +1651,16 @@ it.effect(
       assert.isTrue(
         members.some((m) => m.author.kind === "agent" && m.subscribed && m.postCount === 1),
       );
-    }).pipe(
-      Effect.provide(notifyingBoard(new Set(["thread:active", tagged, "thread:board"]), sent)),
-    );
+    }).pipe(Effect.provide(notifyingBoard(running, sent)));
   },
 );
 
-it.effect("starts an idle thread only when tagged by its delegating agent or the user", () => {
-  const sent: Array<{ threadId: string; mode: string; text: string }> = [];
+it.effect("steers a tagged delegate only while it has an active run", () => {
+  const sent: Notice[] = [];
   const author = agentNamed("thread:author");
   const reviewer = "thread:reviewer";
   const solo = "thread:lone";
+  const running = new Map<string, RunId>();
   return Effect.gen(function* () {
     const board = yield* MessageBoardService.MessageBoardService;
     const general = { kind: "channel", channelName: "general" } as const;
@@ -1675,7 +1689,19 @@ it.effect("starts an idle thread only when tagged by its delegating agent or the
       destination: thread,
       text: `${tag} round 2`,
     });
-    assert.deepEqual([...owner.notifiedThreads], [reviewer]);
+    assert.deepEqual(owner.notifiedThreads, []);
+    assert.include([...owner.skippedThreads], ThreadId.make(reviewer));
+    assert.lengthOf(sent, 0);
+
+    const reviewRun = RunId.make("run:review");
+    running.set(reviewer, reviewRun);
+    const active = yield* board.postAndNotify({
+      author,
+      destination: thread,
+      text: `${tag} round 3`,
+    });
+    assert.deepEqual(active.notifiedThreads, [ThreadId.make(reviewer)]);
+
     const byUser = yield* board.postAndNotify({
       author: user,
       destination: thread,
@@ -1683,15 +1709,14 @@ it.effect("starts an idle thread only when tagged by its delegating agent or the
     });
     assert.include([...byUser.notifiedThreads], ThreadId.make(solo));
     assert.deepEqual(
-      sent.map((item) => [item.threadId, item.mode]),
-      [[reviewer, "auto"]],
+      sent.map(({ threadId, mode, targetRunId }) => [threadId, mode, targetRunId]),
+      [[reviewer, "notify", reviewRun]],
     );
-    assert.match(sent[0]!.text, /then reply there\.$/);
-  }).pipe(Effect.provide(notifyingBoard(new Set(), sent, new Map([[reviewer, "thread:author"]]))));
+  }).pipe(Effect.provide(notifyingBoard(running, sent, new Map([[reviewer, author.threadId]]))));
 });
 
 it.effect("user replies persist individual responsibilities without inline paid dispatch", () => {
-  const sent: Array<{ threadId: string; mode: string; text: string }> = [];
+  const sent: Notice[] = [];
   return Effect.gen(function* () {
     const board = yield* MessageBoardService.MessageBoardService;
     const target = agentNamed("thread:reply-target");
@@ -1715,13 +1740,15 @@ it.effect("user replies persist individual responsibilities without inline paid 
       sent.map(({ mode }) => mode),
       [],
     );
-  }).pipe(Effect.provide(notifyingBoard(new Set(), sent)));
+  }).pipe(Effect.provide(notifyingBoard(new Map(), sent)));
 });
 
-it.effect("replies preserve wake ownership and do not notify their own author", () => {
-  const sent: Array<{ threadId: string; mode: string; text: string }> = [];
+it.effect("replies notify an active recipient except when they wrote both posts", () => {
+  const sent: Notice[] = [];
   const parent = "thread:parent";
   const child = ThreadId.make("thread:child");
+  const running = new Map<string, RunId>();
+  const childRun = RunId.make("run:child");
   return Effect.gen(function* () {
     const board = yield* MessageBoardService.MessageBoardService;
     const root = yield* board.post({
@@ -1729,27 +1756,26 @@ it.effect("replies preserve wake ownership and do not notify their own author", 
       destination: { kind: "channel", channelName: "general" },
       text: "Ready",
     });
-    for (const author of [agentNamed("thread:stranger"), agentNamed(child), agentNamed(parent)]) {
-      const result = yield* board.postAndNotify({
-        author,
+    const replyAs = (threadId: string) =>
+      board.postAndNotify({
+        author: agentNamed(threadId),
         destination: { kind: "reply", rootId: root.id },
         replyToId: root.id,
         text: "Follow up",
       });
-      assert.deepEqual(
-        result.notifiedThreads,
-        author.kind === "agent" && author.threadId === parent ? [child] : [],
-      );
-    }
+    assert.deepEqual((yield* replyAs("thread:stranger")).skippedThreads, [child]);
+    running.set(child, childRun);
+    assert.deepEqual((yield* replyAs(child)).notifiedThreads, []);
+    assert.deepEqual((yield* replyAs(parent)).notifiedThreads, [child]);
     assert.deepEqual(
-      sent.map(({ threadId, mode }) => [threadId, mode]),
-      [[child, "auto"]],
+      sent.map(({ threadId, mode, targetRunId }) => [threadId, mode, targetRunId]),
+      [[child, "notify", childRun]],
     );
-  }).pipe(Effect.provide(notifyingBoard(new Set(), sent, new Map([[child, parent]]))));
+  }).pipe(Effect.provide(notifyingBoard(running, sent, new Map([[child, parent]]))));
 });
 
 it.effect("a reply and mention of the same running agent persist one responsibility", () => {
-  const sent: Array<{ threadId: string; mode: string; text: string }> = [];
+  const sent: Notice[] = [];
   const target = ThreadId.make("thread:running-reply");
   return Effect.gen(function* () {
     const board = yield* MessageBoardService.MessageBoardService;
@@ -1769,7 +1795,7 @@ it.effect("a reply and mention of the same running agent persist one responsibil
       sent.map(({ threadId, mode }) => [threadId, mode]),
       [],
     );
-  }).pipe(Effect.provide(notifyingBoard(new Set([target]), sent)));
+  }).pipe(Effect.provide(notifyingBoard(new Map([[target, RunId.make("run:reply")]]), sent)));
 });
 
 it.effect("records how long an agent worked before each post in its run", () =>
@@ -1803,7 +1829,7 @@ it.effect("records how long an agent worked before each post in its run", () =>
               } as unknown as ShellResult),
           }),
         ),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(layerPlatform),
       ),
     ),
   ),
@@ -1873,7 +1899,7 @@ it.effect("shows a run's own edits once, on its last post in the discussion", ()
               } as never),
           }),
         ),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(layerPlatform),
       ),
     ),
   );
@@ -2004,10 +2030,13 @@ it.effect("lists an agent's posted and subscribed discussions across channels by
 );
 
 it.effect(
-  "folds further posts into one pending notice until the agent reads the discussion",
+  "coalesces notices until the discussion is read or the recipient starts another run",
   () => {
-    const sent: Array<{ threadId: string; mode: string; text: string }> = [];
+    const sent: Notice[] = [];
     const listener = ThreadId.make("thread:listener");
+    const firstRun = RunId.make("run:first");
+    const nextRun = RunId.make("run:next");
+    const running = new Map<string, RunId>([[listener, firstRun]]);
     return Effect.gen(function* () {
       const board = yield* MessageBoardService.MessageBoardService;
       const root = yield* board.post({
@@ -2029,13 +2058,22 @@ it.effect(
       const second = yield* reply("Second");
       assert.deepEqual(second.notifiedThreads, []);
       assert.deepEqual(second.coalescedThreads, [listener]);
+      running.delete(listener);
+      const idle = yield* reply("While idle");
+      assert.deepEqual(idle.skippedThreads, [listener]);
+      assert.deepEqual(idle.coalescedThreads, []);
+      running.set(listener, nextRun);
+      assert.deepEqual((yield* reply("Next run")).notifiedThreads, [listener]);
       yield* board.markRead({ viewer: { kind: "thread", threadId: listener }, rootId: root.id });
       assert.deepEqual((yield* reply("Third")).notifiedThreads, [listener]);
       // A tag still gets through while a notice is pending.
       const tagged = yield* reply(`@${boardPersona(listener).name} need you`);
       assert.deepEqual(tagged.notifiedThreads, [listener]);
-      assert.equal(sent.length, 3);
-    }).pipe(Effect.provide(notifyingBoard(new Set([listener]), sent)));
+      assert.deepEqual(
+        sent.map(({ targetRunId }) => targetRunId),
+        [firstRun, nextRun, nextRun, nextRun],
+      );
+    }).pipe(Effect.provide(notifyingBoard(running, sent)));
   },
 );
 

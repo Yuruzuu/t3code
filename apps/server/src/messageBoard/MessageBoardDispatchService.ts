@@ -1,5 +1,4 @@
-import * as Crypto from "effect/Crypto";
-import * as Hex from "effect/encoding/Hex";
+import * as Digest from "effect/crypto/Digest";
 import { BoardPostId, CommandId, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
@@ -15,7 +14,7 @@ const encodeRequestGenerations = Schema.encodeEffect(
 );
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const handling = yield* MessageBoardHandlingStore.make;
   const selection = yield* MessageBoardResponderSelection.makeExecutionGuard;
@@ -41,7 +40,7 @@ export const make = Effect.gen(function* () {
           }>`SELECT id,generation FROM board_responsibilities WHERE root_id=${rootId} AND recipient_thread_id=${threadId} AND status='pending' ORDER BY rowid`;
           if (!pending.length) return null;
           const identity = yield* encodeRequestGenerations(pending);
-          const id = `board-batch:${Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(`${rootId}:${threadId}:${identity}`)))}`;
+          const id = `board-batch:${yield* digest.digestHex(Digest.sha256, new TextEncoder().encode(`${rootId}:${threadId}:${identity}`))}`;
           yield* sql`INSERT INTO board_dispatch_batches(id,root_id,recipient_thread_id,requests_json) VALUES(${id},${rootId},${threadId},${yield* encodeRequestGenerations(pending)})`;
           for (const request of pending)
             yield* sql`UPDATE board_responsibilities SET status='queued',batch_id=${id} WHERE id=${request.id} AND generation=${request.generation}`;

@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2ProjectedTurnItem,
@@ -25,11 +27,11 @@ export function boardAgentActivity(
   shell: ActivityShell,
   items: readonly OrchestrationV2ProjectedTurnItem[] = [],
 ): string | null {
-  if (STARTING.has(shell.status)) return "Starting up";
+  if (STARTING.has(shell.status)) return m(msg("Starting up"));
   if (shell.status !== "running") return null;
   if (shell.pendingRuntimeRequest && shell.pendingRuntimeRequest.blocking !== false)
-    return "Waiting for input";
-  if (shell.blockedOnThreadWait) return "Waiting on another agent";
+    return m(msg("Waiting for input"));
+  if (shell.blockedOnThreadWait) return m(msg("Waiting on another agent"));
   const reasoning =
     shell.activeRunId == null
       ? undefined
@@ -65,5 +67,5 @@ export function boardAgentActivity(
         ? `${line.slice(0, MAX_ACTIVITY_CHARS - 1).trimEnd()}…`
         : line;
   }
-  return "Working";
+  return m(msg("Working"));
 }

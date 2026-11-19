@@ -1,11 +1,13 @@
 import type { BoardPost, RunId, ThreadId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { ChevronRightIcon, CornerDownRightIcon, MessageSquareIcon, ReplyIcon } from "lucide-react";
 import { memo, useState, type ReactNode } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import ChatMarkdown, { type ChatMarkdownContextReference } from "../ChatMarkdown";
+import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { ChangedFilesCard } from "../chat/ChangedFilesTree";
 import { MessageCopyButton } from "../chat/MessageCopyButton";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -76,11 +78,13 @@ function ReplyingTo({
   onJumpTo: (postId: BoardPost["id"]) => void;
   alignRight: boolean;
 }) {
-  const name = boardAuthorName(replyTarget.author);
+  const gt = useGT();
+  const m = useMessages();
+  const name = boardAuthorName(replyTarget.author, m);
   return (
     <button
       type="button"
-      aria-label={`Replying to ${name}. Show the message`}
+      aria-label={gt("Replying to {author}. Show the message", { author: name })}
       onClick={() => onJumpTo(replyTarget.id)}
       className={cn(
         "mb-1 flex max-w-full min-w-0 items-center gap-1.5 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
@@ -91,13 +95,17 @@ function ReplyingTo({
         aria-hidden="true"
         className={cn("size-3 shrink-0", alignRight && "order-last -scale-x-100")}
       />
-      <span className="shrink-0">Replying to</span>
-      <span className="inline-flex shrink-0 items-center gap-1">
-        <span aria-hidden="true" className="flex grayscale">
-          <BoardAuthorAvatar author={replyTarget.author} size="2xs" />
-        </span>
-        <BoardAuthorLabel author={replyTarget.author} />
-      </span>
+      <T>
+        <span className="shrink-0">Replying to</span>{" "}
+        <Var>
+          <span className="inline-flex shrink-0 items-center gap-1">
+            <span aria-hidden="true" className="flex grayscale">
+              <BoardAuthorAvatar author={replyTarget.author} size="2xs" />
+            </span>
+            <BoardAuthorLabel author={replyTarget.author} />
+          </span>
+        </Var>
+      </T>
     </button>
   );
 }
@@ -111,6 +119,8 @@ function AgentName({
   onOpen: (threadId: ThreadId) => void;
   className?: string;
 }) {
+  const gt = useGT();
+  const title = author.title || gt("Untitled thread");
   return (
     <Tooltip>
       <TooltipTrigger
@@ -128,17 +138,20 @@ function AgentName({
         <BoardAuthorLabel author={author} />
       </TooltipTrigger>
       <TooltipPopup>
-        {author.model ? `${author.model} · ` : ""}Open thread: {author.title || "Untitled thread"}
+        {author.model
+          ? gt("{model} · Open thread: {title}", { model: author.model, title })
+          : gt("Open thread: {title}", { title })}
       </TooltipPopup>
     </Tooltip>
   );
 }
 
 function WorkedFor({ post }: { post: BoardPost }) {
+  const gt = useGT();
   if (post.workedMs === undefined || post.workedMs < 1_000) return null;
   return (
     <span className="shrink-0 text-muted-foreground">
-      Worked for {formatDuration(post.workedMs)}
+      {gt("Worked for {duration}", { duration: formatDuration(post.workedMs) })}
     </span>
   );
 }
@@ -177,6 +190,8 @@ function MessageFooter({
   onReply: (post: BoardPost) => void;
   compact?: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <div
       className={cn(
@@ -196,7 +211,7 @@ function MessageFooter({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label={`Reply to ${boardAuthorName(post.author)}`}
+          aria-label={gt("Reply to {author}", { author: boardAuthorName(post.author, m) })}
           onClick={() => onReply(post)}
         >
           <ReplyIcon aria-hidden="true" />
@@ -219,6 +234,7 @@ function PostChanges({ post, onOpen }: { post: BoardPost; onOpen: OpenRunChanges
     <ChangedFilesCard
       runId={changes.runId}
       files={changes.files}
+      totals={checkpointFileTotals(changes)}
       allDirectoriesExpanded={expanded}
       resolvedTheme={resolvedTheme}
       onToggleAllDirectories={() => setExpanded((value) => !value)}
@@ -254,6 +270,8 @@ export const BoardMessage = memo(function BoardMessage({
   onReply: (post: BoardPost) => void;
   onJumpTo: (postId: BoardPost["id"]) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { author } = post;
   const mentions = post.mentions;
   const reactions = post.reactions ?? [];
@@ -281,7 +299,10 @@ export const BoardMessage = memo(function BoardMessage({
         ) : (
           <BoardAuthorAvatar author={author} />
         ))}
-      <article aria-label={`Message from ${boardAuthorName(author)}`} className="min-w-0 flex-1">
+      <article
+        aria-label={gt("Message from {author}", { author: boardAuthorName(author, m) })}
+        className="min-w-0 flex-1"
+      >
         <div className={cn("relative w-fit max-w-full min-w-0", isUser && "ml-auto")}>
           {replyTarget && (
             <ReplyingTo replyTarget={replyTarget} onJumpTo={onJumpTo} alignRight={isUser} />
@@ -296,7 +317,9 @@ export const BoardMessage = memo(function BoardMessage({
             </div>
           )}
           {!continuation && author.kind === "system" && (
-            <div className="text-xs text-muted-foreground">System · Availability update</div>
+            <div className="text-xs text-muted-foreground">
+              <T>System · Availability update</T>
+            </div>
           )}
           <div
             className={cn(
@@ -326,7 +349,7 @@ export const BoardMessage = memo(function BoardMessage({
                 onClick={() => setExpanded((value) => !value)}
                 className="mt-1 text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:underline"
               >
-                {expanded ? "Show less" : "Show more"}
+                {expanded ? gt("Show less") : gt("Show more")}
               </button>
             )}
           </div>
@@ -374,8 +397,10 @@ export const BoardMainPost = memo(function BoardMainPost({
   onReact: (postId: BoardPost["id"], emoji: string, active: boolean) => void;
   onReply: (post: BoardPost) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { author } = post;
-  const { title, description } = boardMainPostContent(post);
+  const { title, description } = boardMainPostContent(post, m);
   const reactions = post.reactions ?? [];
   const toggleReaction = (emoji: string, active: boolean) => onReact(post.id, emoji, active);
 
@@ -383,16 +408,23 @@ export const BoardMainPost = memo(function BoardMainPost({
     <article
       id={boardPostElementId(post.id)}
       data-board-post={post.id}
-      aria-label={`Post by ${boardAuthorName(author)}`}
+      aria-label={gt("Post by {author}", { author: boardAuthorName(author, m) })}
       className="group rounded-2xl border border-border/60 bg-card/40 px-5 py-4"
     >
       <div className="flex min-h-7 min-w-0 items-center gap-2 text-xs text-muted-foreground">
         <BoardAuthorAvatar author={author} size="sm" />
-        <span className="shrink-0">Posted by</span>
         {author.kind === "agent" ? (
-          <AgentName author={author} onOpen={onOpenAgentThread} />
+          <T>
+            <span className="shrink-0">Posted by</span>{" "}
+            <Var>
+              <AgentName author={author} onOpen={onOpenAgentThread} />
+            </Var>
+          </T>
         ) : (
-          <span className="font-semibold text-foreground">you</span>
+          <T>
+            <span className="shrink-0">Posted by</span>{" "}
+            <span className="font-semibold text-foreground">you</span>
+          </T>
         )}
         <WorkedFor post={post} />
         <span className="ml-auto shrink-0 pl-3 tabular-nums opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
@@ -416,10 +448,12 @@ export const BoardMainPost = memo(function BoardMainPost({
           className="group/source mt-4 flex w-fit max-w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         >
           <MessageSquareIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-          <span className="shrink-0 text-muted-foreground">Started in</span>
-          <span className="min-w-0 truncate font-medium text-foreground">
-            {author.title || "Untitled thread"}
-          </span>
+          <T>
+            <span className="shrink-0 text-muted-foreground">Started in</span>{" "}
+            <span className="min-w-0 truncate font-medium text-foreground">
+              <Var>{author.title || gt("Untitled thread")}</Var>
+            </span>
+          </T>
           <ChevronRightIcon
             aria-hidden="true"
             className="size-4 shrink-0 text-muted-foreground group-hover/source:text-foreground"

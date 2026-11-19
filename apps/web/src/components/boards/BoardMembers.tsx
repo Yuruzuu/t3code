@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react";
 import type { BoardMember } from "@t3tools/contracts";
 import { memo } from "react";
 
@@ -31,14 +32,18 @@ const BoardMemberRow = memo(function BoardMemberRow({
   activity,
   onOpenAgentThread,
 }: BoardMemberState & { onOpenAgentThread: BoardsViewModel["onOpenAgentThread"] }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const { author } = member;
   if (author.kind !== "agent") return null;
   const details = [
     member.postCount > 0
-      ? `${member.postCount} ${member.postCount === 1 ? "message" : "messages"}`
+      ? gt("{count, plural, one {{count} message} other {{count} messages}}", {
+          count: member.postCount,
+        })
       : null,
-    member.subscribed ? "subscribed" : null,
-    member.readAt ? "has read it" : null,
+    member.subscribed ? gt("subscribed") : null,
+    member.readAt ? gt("has read it") : null,
   ].filter(Boolean);
 
   return (
@@ -52,7 +57,9 @@ const BoardMemberRow = memo(function BoardMemberRow({
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5 text-sm">
             <span className="shrink-0 font-medium">
-              <BoardAuthorLabel author={author}>{boardAuthorByline(author)}</BoardAuthorLabel>
+              <BoardAuthorLabel author={author}>
+                {boardAuthorByline(author, resolve)}
+              </BoardAuthorLabel>
             </span>
             <span
               className={cn(
@@ -60,11 +67,11 @@ const BoardMemberRow = memo(function BoardMemberRow({
                 activity ? "text-success-foreground" : "text-muted-foreground",
               )}
             >
-              {activity ?? "Idle"}
+              {activity ?? gt("Idle")}
             </span>
           </span>
           <span className="block truncate text-xs text-muted-foreground">
-            {author.title || "Untitled thread"}
+            {author.title || gt("Untitled thread")}
           </span>
           <span className="block truncate text-2xs text-muted-foreground">
             {details.join(" · ")}
@@ -83,15 +90,21 @@ export function BoardMembers({
   members: readonly BoardMemberState[];
   onOpenAgentThread: BoardsViewModel["onOpenAgentThread"];
 }) {
+  const gt = useGT();
   const workingCount = members.filter((member) => member.activity !== null).length;
-  const label = `${members.length} ${members.length === 1 ? "agent" : "agents"}${
-    workingCount > 0 ? `, ${workingCount} working` : ""
-  }`;
+  const count = members.length;
+  const label =
+    workingCount > 0
+      ? gt(
+          "{count, plural, one {{count} agent, {workingCount} working} other {{count} agents, {workingCount} working}}",
+          { count, workingCount },
+        )
+      : gt("{count, plural, one {{count} agent} other {{count} agents}}", { count });
 
   return (
     <Popover>
       <PopoverTrigger
-        aria-label={`Members: ${label}`}
+        aria-label={gt("Members: {label}", { label })}
         render={
           <button
             type="button"
@@ -116,7 +129,7 @@ export function BoardMembers({
         {label}
       </PopoverTrigger>
       <PopoverPopup align="start" className="w-72">
-        <ul aria-label="Members">
+        <ul aria-label={gt("Members")}>
           {members.map((state) => (
             <BoardMemberRow
               key={state.member.author.kind === "agent" ? state.member.author.threadId : "user"}

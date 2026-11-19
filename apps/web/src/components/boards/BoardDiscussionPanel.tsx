@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import type { BoardAuthor, BoardPostId, BoardTodo } from "@t3tools/contracts";
 import { ArrowLeftIcon, ChevronDownIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
@@ -30,11 +31,12 @@ export function BoardDiscussionPanel({
   onOpenAgentThread: (author: BoardAuthor) => void;
   onJumpTo: (postId: BoardPostId) => void;
 }) {
+  const gt = useGT();
   const workingCount = members.filter((member) => member.activity !== null).length;
 
   return (
     <aside
-      aria-label="Discussion details"
+      aria-label={gt("Discussion details")}
       className="pointer-events-none absolute inset-y-0 end-4 z-10 hidden w-80 flex-col py-3 @5xl/boards:flex"
     >
       {/* Each section scrolls on its own past its cap and shrinks when the window is short. */}
@@ -47,16 +49,19 @@ export function BoardDiscussionPanel({
             onClick={() => onOpenAgentThread(lead)}
           >
             <ArrowLeftIcon aria-hidden="true" />
-            Return to thread
+            <T>Return to thread</T>
           </Button>
         )}
         <PanelSection
-          title="Team"
+          title={gt("Team")}
           meta={
             <>
               {members.length}
               {workingCount > 0 && (
-                <span className="text-success-foreground"> · {workingCount} working</span>
+                <span className="text-success-foreground">
+                  {" "}
+                  · {gt("{count} working", { count: workingCount })}
+                </span>
               )}
             </>
           }
@@ -79,7 +84,7 @@ export function BoardDiscussionPanel({
           </ScrollArea>
         </PanelSection>
         {todos.length > 0 && (
-          <PanelSection title="Todos" meta={todos.length} fill>
+          <PanelSection title={gt("Todos")} meta={todos.length} fill>
             <ScrollArea scrollFade className="max-h-64 min-h-0 flex-auto">
               <BoardTodoGroups todos={todos} onJumpTo={onJumpTo} />
             </ScrollArea>
@@ -139,12 +144,17 @@ function TeamMemberRow({
   activity: string | null;
   onOpen: (author: BoardAuthor) => void;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const working = activity !== null;
   const row = (
     <button
       type="button"
       onClick={() => onOpen(author)}
-      aria-label={`${boardAuthorName(author)}, ${activity ?? "Idle"}`}
+      aria-label={gt("{name}, {activity}", {
+        name: boardAuthorName(author, resolve),
+        activity: activity ?? gt("Idle"),
+      })}
       className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <BoardAuthorAvatar author={author} size="sm" working={working} />
@@ -153,13 +163,13 @@ function TeamMemberRow({
           <BoardAuthorLabel author={author} />
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {boardAuthorRole(author)}
+          {boardAuthorRole(author, resolve)}
         </span>
       </span>
       {working && (
         <span className="inline-flex shrink-0 items-center gap-1 text-2xs text-success-foreground">
           <span aria-hidden="true" className="size-1.5 rounded-full bg-success" />
-          Working
+          <T>Working</T>
         </span>
       )}
     </button>

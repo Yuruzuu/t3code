@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { ReactNode } from "react";
 
 import { ScrollArea } from "../ui/scroll-area";
@@ -9,13 +10,14 @@ import { BoardThreadList } from "./BoardThreadList";
 import type { BoardsViewModel } from "./boardsViewModel";
 
 export function BoardsView({ model, launcher }: { model: BoardsViewModel; launcher: ReactNode }) {
+  const gt = useGT();
   const channelName = model.selectedChannelName;
   const thread = model.selectedRootId === null ? null : model.thread;
   const members = thread ? agentMembers(thread.members, model.agentActivity) : [];
 
   return (
     <section
-      aria-label="Boards"
+      aria-label={gt("Boards")}
       className="@container/boards flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
     >
       <div className="shrink-0">

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   closestCenter,
   DndContext,
@@ -42,6 +43,7 @@ function BoardDiscussionTab({
   onSelect: BoardsViewModel["onSelectTab"];
   onClose: BoardsViewModel["onCloseTab"];
 }) {
+  const gt = useGT();
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.rootId,
   });
@@ -67,7 +69,10 @@ function BoardDiscussionTab({
         isDragging && "relative z-10 bg-accent",
       )}
     >
-      <PanelTabCloseButton label={`Close ${tab.title}`} onClick={() => onClose(tab.rootId)}>
+      <PanelTabCloseButton
+        label={gt("Close {title}", { title: tab.title })}
+        onClick={() => onClose(tab.rootId)}
+      >
         <BoardAuthorAvatar author={tab.author} size="2xs" />
       </PanelTabCloseButton>
       <button
@@ -92,6 +97,7 @@ export function BoardTabs({
   /** Controls for the open discussion, kept in the header so they never scroll away. */
   trailing?: ReactNode;
 }) {
+  const gt = useGT();
   const { tabs, selectedRootId, onMoveTab } = model;
   const navRef = useRef<HTMLElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -123,12 +129,12 @@ export function BoardTabs({
         )}
       >
         <LayoutGridIcon aria-hidden="true" className="size-3.5 opacity-70" />
-        All channels
+        <T>All channels</T>
       </button>
       {tabs.length > 0 && <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" />}
       <nav
         ref={navRef}
-        aria-label="Open discussions"
+        aria-label={gt("Open discussions")}
         className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none]"
       >
         <DndContext
@@ -159,7 +165,7 @@ export function BoardTabs({
       {!model.isConnected && (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-2xs text-warning-foreground">
           <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />
-          Offline
+          <T>Offline</T>
         </span>
       )}
       {trailing}

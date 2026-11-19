@@ -1,3 +1,5 @@
+import { msg, useLocale, useMessages } from "gt-react";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { boardThreadPageSize } from "@t3tools/client-runtime/message-board";
@@ -50,31 +52,33 @@ const emptyActivities = Atom.make<ReadonlyMap<ThreadId, string>>(new Map<ThreadI
 const queryError = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
   result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null;
 /** Working agents and their activity, kept identical while nothing changed so rows don't re-render. */
-const agentActivities = Atom.family((environmentId: EnvironmentId) => {
-  let previous: ReadonlyMap<ThreadId, string> = new Map();
-  return Atom.make((get) => {
-    const next = new Map<ThreadId, string>();
-    for (const thread of get(environmentThreadShells.environmentThreadsAtom(environmentId))) {
-      const items =
-        thread.status === "running"
-          ? get(
-              environmentThreadDetails.visibleTurnItemsAtom(
-                scopeThreadRef(environmentId, thread.id),
-              ),
-            )
-          : [];
-      const activity = boardAgentActivity(thread, items);
-      if (activity !== null) next.set(thread.id, activity);
-    }
-    if (
-      next.size === previous.size &&
-      [...next].every(([id, activity]) => previous.get(id) === activity)
-    )
-      return previous;
-    previous = next;
-    return next;
-  });
-});
+const agentActivities = Atom.family((environmentId: EnvironmentId) =>
+  Atom.family((_locale: string) => {
+    let previous: ReadonlyMap<ThreadId, string> = new Map();
+    return Atom.make((get) => {
+      const next = new Map<ThreadId, string>();
+      for (const thread of get(environmentThreadShells.environmentThreadsAtom(environmentId))) {
+        const items =
+          thread.status === "running"
+            ? get(
+                environmentThreadDetails.visibleTurnItemsAtom(
+                  scopeThreadRef(environmentId, thread.id),
+                ),
+              )
+            : [];
+        const activity = boardAgentActivity(thread, items);
+        if (activity !== null) next.set(thread.id, activity);
+      }
+      if (
+        next.size === previous.size &&
+        [...next].every(([id, activity]) => previous.get(id) === activity)
+      )
+        return previous;
+      previous = next;
+      return next;
+    });
+  }),
+);
 
 function requireSuccess<A, E>(result: AtomCommandResult<A, E>): A {
   if (AsyncResult.isSuccess(result)) return result.value;
@@ -82,6 +86,8 @@ function requireSuccess<A, E>(result: AtomCommandResult<A, E>): A {
 }
 
 export function useBoardsViewModel(): BoardsViewModel {
+  const locale = useLocale();
+  const resolve = useMessages();
   const search = route.useSearch();
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -112,7 +118,7 @@ export function useBoardsViewModel(): BoardsViewModel {
       : messageBoardAtoms.threads(environmentId, selectedChannelName, threadSort),
   );
   const activities = useAtomValue(
-    environmentId === null ? emptyActivities : agentActivities(environmentId),
+    environmentId === null ? emptyActivities : agentActivities(environmentId)(locale),
   );
   const listed = page?.threads.find((summary) => summary.root.id === selectedRootId);
   // Opening from the list shows the opening post at once while the replies load.
@@ -181,7 +187,7 @@ export function useBoardsViewModel(): BoardsViewModel {
   }, [environmentId, openRootId, lastActivityAt, isConnected]);
 
   const openRoot = thread?.summary.root ?? null;
-  const openTitle = openRoot === null ? null : boardMainPostContent(openRoot).title;
+  const openTitle = openRoot === null ? null : boardMainPostContent(openRoot, resolve).title;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Every way into a discussion ends at this URL, including links from outside the boards view, and each gets a tab in the persisted store.
   useEffect(() => {
     if (environmentId === null || openRoot === null || openTitle === null) return;
@@ -204,7 +210,7 @@ export function useBoardsViewModel(): BoardsViewModel {
     try {
       await action();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "The board request failed.");
+      setActionError(error instanceof Error ? error.message : m(msg("The board request failed.")));
       throw error;
     }
   };

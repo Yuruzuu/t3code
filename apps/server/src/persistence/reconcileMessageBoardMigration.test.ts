@@ -4,15 +4,16 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
+import { runMessageBoardMigrations } from "./MessageBoardMigrations.ts";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import MessageBoard from "./Migrations/073_MessageBoard.ts";
-import MessageBoardRoles from "./Migrations/074_MessageBoardRoles.ts";
-import MessageBoardThreadReads from "./Migrations/075_MessageBoardThreadReads.ts";
-import MessageBoardSubscriptionOptOut from "./Migrations/076_MessageBoardSubscriptionOptOut.ts";
-import MessageBoardRepliesReactions from "./Migrations/077_MessageBoardRepliesReactions.ts";
-import MessageBoardPostWorkedMs from "./Migrations/078_MessageBoardPostWorkedMs.ts";
-import MessageBoardPostRunId from "./Migrations/079_MessageBoardPostRunId.ts";
-import MessageBoardTodos from "./Migrations/080_MessageBoardTodos.ts";
+import MessageBoard from "./MessageBoardMigrations/001_MessageBoard.ts";
+import MessageBoardRoles from "./MessageBoardMigrations/002_MessageBoardRoles.ts";
+import MessageBoardThreadReads from "./MessageBoardMigrations/003_MessageBoardThreadReads.ts";
+import MessageBoardSubscriptionOptOut from "./MessageBoardMigrations/004_MessageBoardSubscriptionOptOut.ts";
+import MessageBoardRepliesReactions from "./MessageBoardMigrations/005_MessageBoardRepliesReactions.ts";
+import MessageBoardPostWorkedMs from "./MessageBoardMigrations/006_MessageBoardPostWorkedMs.ts";
+import MessageBoardPostRunId from "./MessageBoardMigrations/007_MessageBoardPostRunId.ts";
+import MessageBoardTodos from "./MessageBoardMigrations/008_MessageBoardTodos.ts";
 
 const seedLegacyBoards = Effect.fn("test.seedLegacyBoards")(function* () {
   yield* runMigrations({ toMigrationInclusive: 69 });
@@ -25,27 +26,40 @@ const seedLegacyBoards = Effect.fn("test.seedLegacyBoards")(function* () {
   });
 });
 
-it.effect("upgrades the boards branch without replaying its schema or losing posts", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* seedLegacyBoards();
-    yield* sql`INSERT INTO board_channels (name, created_by_json, created_at) VALUES ('notes', '{"kind":"user"}', '2026-10-28')`;
-    yield* sql`INSERT INTO board_posts (id, channel_name, root_id, author_json, text, created_at) VALUES ('saved', 'notes', 'saved', '{"kind":"user"}', 'Keep this finding', '2026-10-28')`;
-    yield* runMigrations();
-    assert.deepStrictEqual(yield* sql`SELECT text FROM board_posts WHERE id = 'saved'`, [
-      { text: "Keep this finding" },
-    ]);
-    const history = yield* sql<{
-      migration_id: number;
-      name: string;
-    }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
-    assert.deepStrictEqual(
-      history.map((row) => [row.migration_id, row.name] as const),
-      migrationManifest,
-    );
-    assert.deepStrictEqual(yield* runMigrations(), []);
-    yield* sql`INSERT INTO peer_environment_links (environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced) VALUES ('peer', 'secret', 'Peer', '[]', 'read', '2026-10-28', '2026-10-29', 1)`;
-  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+it.effect.each([70, 73])(
+  "upgrades the boards branch starting at migration %s without losing posts",
+  (firstId) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      if (firstId === 70) {
+        yield* seedLegacyBoards();
+      } else {
+        yield* runMigrations({ toMigrationInclusive: 72 });
+        yield* runMessageBoardMigrations();
+        yield* sql`
+          INSERT INTO effect_sql_migrations (migration_id, name, created_at)
+          SELECT migration_id + 72, name, created_at FROM effect_sql_message_board_migrations
+        `;
+        yield* sql`DROP TABLE effect_sql_message_board_migrations`;
+      }
+      yield* sql`INSERT INTO board_channels (name, created_by_json, created_at) VALUES ('notes', '{"kind":"user"}', '2026-10-28')`;
+      yield* sql`INSERT INTO board_posts (id, channel_name, root_id, author_json, text, created_at) VALUES ('saved', 'notes', 'saved', '{"kind":"user"}', 'Keep this finding', '2026-10-28')`;
+      yield* runMigrations();
+      assert.deepStrictEqual(yield* sql`SELECT text FROM board_posts WHERE id = 'saved'`, [
+        { text: "Keep this finding" },
+      ]);
+      const history = yield* sql<{
+        migration_id: number;
+        name: string;
+      }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(
+        history.map((row) => [row.migration_id, row.name] as const),
+        migrationManifest,
+      );
+      assert.lengthOf(yield* sql`SELECT migration_id FROM effect_sql_message_board_migrations`, 12);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      yield* sql`INSERT INTO peer_environment_links (environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced) VALUES ('peer', 'secret', 'Peer', '[]', 'read', '2026-10-28', '2026-10-29', 1)`;
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it.effect("preserves the full pre-rebase schema and todos through migration 77", () =>
@@ -97,7 +111,8 @@ it.effect("rejects unknown fork history without changing migration records", () 
 it.effect("backfills discussion suggestions without historical responsibilities or dispatch", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 81 });
+    yield* runMigrations({ toMigrationInclusive: 99 });
+    yield* runMessageBoardMigrations(9);
     yield* sql`INSERT INTO board_channels(name,created_by_json,created_at) VALUES('old','{"kind":"user"}','2026-10-28')`;
     yield* sql`INSERT INTO board_posts(id,root_id,channel_name,author_json,text,created_at) VALUES('old','old','old','{"kind":"agent","threadId":"original"}','Historical request','2026-10-28')`;
     yield* runMigrations();
@@ -123,7 +138,8 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 82 });
+      yield* runMigrations({ toMigrationInclusive: 99 });
+      yield* runMessageBoardMigrations(10);
       yield* sql`INSERT INTO board_channels(name,created_by_json,created_at) VALUES('tasks','{"kind":"user"}','2026-10-28')`;
       yield* sql`INSERT INTO board_posts(id,root_id,channel_name,author_json,text,created_at) VALUES('tasks','tasks','tasks','{"kind":"user"}','Scope','2026-10-28')`;
       const owner =
@@ -154,7 +170,8 @@ it.effect(
 it.effect("adds durable automatic selection without rerouting historical explicit requests", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 83 });
+    yield* runMigrations({ toMigrationInclusive: 99 });
+    yield* runMessageBoardMigrations(11);
     yield* sql`INSERT INTO board_channels(name,created_by_json,created_at) VALUES('existing','{"kind":"user"}','2026-10-30')`;
     yield* sql`INSERT INTO board_posts(id,root_id,channel_name,author_json,text,created_at) VALUES('existing','existing','existing','{"kind":"user"}','Existing explicit request','2026-10-30')`;
     yield* sql`INSERT INTO board_discussions(root_id,lead_thread_id,revision) VALUES('existing','chosen-lead',5)`;

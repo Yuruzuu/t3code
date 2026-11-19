@@ -26,7 +26,7 @@ import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { toolkitRegistration } from "../../McpHttpServer.ts";
+import { layerInProcessMcpServer, toolkitRegistration } from "../../McpHttpServer.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as MessageBoardHandlers from "./handlers.ts";
@@ -271,7 +271,7 @@ const makeHarness = Effect.fn("makeMessageBoardToolkitHarness")(function* (
       }).pipe(
         Effect.provide(
           toolkitRegistration(MessageBoardToolkit, MessageBoardHandlers.layer).pipe(
-            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provideMerge(layerInProcessMcpServer),
             Layer.provide(layerDependencies),
           ),
         ),

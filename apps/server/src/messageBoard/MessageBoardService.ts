@@ -49,11 +49,11 @@ import { boardPersona } from "@t3tools/shared/boardPersona";
 import { collectBoardMentions } from "@t3tools/shared/boardMentions";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -233,17 +233,13 @@ export class MessageBoardService extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<BoardPost>, BoardFailure>;
     /** Stores a post silently, resolving selected identities and unambiguous persona names. */
     readonly post: (input: PostInput) => Effect.Effect<BoardPost, BoardFailure>;
-    /**
-     * Stores a post, subscribes an agent author to its discussion, and tells subscribers,
-     * mentioned or replied-to agents and `notifyThreads` about it. Only running threads are told,
-     * except that a mention or reply from the user or delegating agent starts it again.
-     */
+    /** Agent notices target active runs. User requests use durable dispatch. */
     readonly postAndNotify: (
       input: PostInput & { readonly notifyThreads?: ReadonlyArray<ThreadId> },
     ) => Effect.Effect<PostAndNotifyResult, BoardFailure>;
     readonly applyTodoAction: (
       input: typeof MessageBoardTodoActionInput.Type & { viewer: BoardViewer },
-    ) => Effect.Effect<typeof MessageBoardTodoActionResult.Type, BoardFailure>;
+    ) => Effect.Effect<MessageBoardTodoActionResult, BoardFailure>;
     readonly listTodos: (
       input: typeof MessageBoardListTodosInput.Type & { viewer: BoardViewer },
     ) => Effect.Effect<typeof MessageBoardListTodosResult.Type, BoardFailure>;
@@ -439,7 +435,8 @@ export const agentAuthorForThread = Effect.fn("MessageBoardService.agentAuthorFo
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
   const handling = yield* MessageBoardHandlingStore.make;
   const selections = yield* MessageBoardSelectionStore.make;
   const responder = yield* MessageBoardResponderSelection.MessageBoardResponderSelection;
@@ -450,7 +447,7 @@ const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   // When each agent was last told about each discussion. In memory: after a restart the worst
   // case is one extra notice, which doesn't justify storing it.
-  const pendingNotices = new Map<string, string>();
+  const pendingNotices = new Map<string, { runId: RunId; createdAt: string }>();
   const postColumns = sql.literal(
     `id, channel_name AS "channelName", root_id AS "rootId", author_json AS author, text, created_at AS "createdAt", reply_to_id AS "replyToId", mentions_json AS mentions, worked_ms AS "workedMs", run_id AS "runId"`,
   );
@@ -1167,19 +1164,17 @@ const make = Effect.gen(function* () {
       const fingerprint =
         decoded.requestKey === undefined
           ? null
-          : Hex.encode(
-              yield* crypto.digest(
-                "SHA-256",
-                new TextEncoder().encode(
-                  encodeRequestPayload({
-                    operation: notifyThreads === undefined ? "append" : "post",
-                    destination: decoded.destination,
-                    text: decoded.text,
-                    mode: decoded.mode ?? "request",
-                    replyToId: decoded.replyToId ?? null,
-                    notifyThreads: [...new Set(notifyThreads ?? [])].sort(),
-                  }),
-                ),
+          : yield* digest.digestHex(
+              Digest.sha256,
+              new TextEncoder().encode(
+                encodeRequestPayload({
+                  operation: notifyThreads === undefined ? "append" : "post",
+                  destination: decoded.destination,
+                  text: decoded.text,
+                  mode: decoded.mode ?? "request",
+                  replyToId: decoded.replyToId ?? null,
+                  notifyThreads: [...new Set(notifyThreads ?? [])].sort(),
+                }),
               ),
             );
       if (decoded.text.trim().length === 0) return yield* invalidInput();
@@ -1211,7 +1206,7 @@ const make = Effect.gen(function* () {
               };
             }
           }
-          const id = BoardPostId.make(yield* crypto.randomUUIDv4());
+          const id = BoardPostId.make(yield* random.uuidV4());
           const createdAt = yield* timestamp;
           let channelName: BoardChannelName;
           let rootId: BoardPostId;
@@ -1426,61 +1421,44 @@ const make = Effect.gen(function* () {
       const addressed = mentioned.has(threadId) || repliedThreadId === threadId;
       const what = mentioned.has(threadId) ? "You were mentioned" : "New post";
       const noticeKey = `${threadId}\u0000${saved.rootId}`;
-      if (!addressed && !explicit.has(threadId)) {
-        const pendingSince = pendingNotices.get(noticeKey);
-        if (pendingSince !== undefined) {
-          const read = yield* sql<{ read_at: string }>`
-            SELECT read_at FROM board_thread_read_markers
-            WHERE viewer_key = ${viewerKey({ kind: "thread", threadId })} AND root_id = ${saved.rootId}`;
-          if ((read[0]?.read_at ?? "") < pendingSince) {
-            coalescedThreads.push(threadId);
-            continue;
-          }
+      const thread = yield* threadManagement
+        .getThreadShell(threadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (thread?.status !== "running" || thread.activeRunId === null) {
+        skippedThreads.push(threadId);
+        continue;
+      }
+      const { activeRunId } = thread;
+      const pending = pendingNotices.get(noticeKey);
+      if (!addressed && !explicit.has(threadId) && pending?.runId === activeRunId) {
+        const read = yield* sql<{ read_at: string }>`
+          SELECT read_at FROM board_thread_read_markers
+          WHERE viewer_key = ${viewerKey({ kind: "thread", threadId })} AND root_id = ${saved.rootId}`;
+        if ((read[0]?.read_at ?? "") < pending.createdAt) {
+          coalescedThreads.push(threadId);
+          continue;
         }
       }
-      const delivered = yield* Effect.gen(function* () {
-        const thread = yield* threadManagement.getThreadShell(threadId);
-        if (thread === null) return false;
-        const running = thread.activeRunId !== null && thread.status === "running";
-        // Only the user or the agent that delegated a thread may start it again; anything
-        // looser lets agents wake each other forever.
-        const followUp =
-          addressed &&
-          thread.lineage.relationshipToParent === "subagent" &&
-          thread.lineage.parentThreadId === author.threadId;
-        const resume = !running && thread.activeRunId === null && followUp;
-        if (!running && !resume) return false;
-        const message = {
+      const delivered = yield* threadManagement
+        .dispatch({
+          type: "message.dispatch",
           commandId: CommandId.make(`board:${saved.id}:${threadId}`),
           threadId,
-          ...(author.kind === "agent" ? { senderThreadId: author.threadId } : {}),
+          senderThreadId: author.threadId,
           messageId: MessageId.make(`board:${saved.id}:${threadId}`),
-          text: resume
-            ? `${what} in #${saved.channelName} by ${label}: ${preview}. Read with board_read_thread ${saved.rootId}, then reply there.`
-            : `${what} in #${saved.channelName} by ${label}: ${preview}. Read with board_read_thread ${saved.rootId}; further posts there won't notify you until you do.`,
+          text: `${what} in #${saved.channelName} by ${label}: ${preview}. Read with board_read_thread ${saved.rootId}; further posts there won't notify you until you do.`,
           attachments: [],
-        };
-        if (followUp) {
-          yield* threadManagement.sendToThread({
-            ...message,
-            projectId: thread.projectId,
-            mode: resume ? "auto" : "steer",
-            createdBy: author.kind === "agent" ? "agent" : "user",
-            creationSource: author.kind === "agent" ? "mcp" : "web",
-          });
-        } else {
-          yield* threadManagement.dispatch({
-            ...message,
-            type: "message.dispatch",
-            dispatchMode: { type: "steer_active", targetRunId: thread.activeRunId! },
-            notificationOnly: true,
-            createdBy: "agent",
-            creationSource: "server",
-          });
-        }
-        return true;
-      }).pipe(Effect.orElseSucceed(() => false));
-      if (delivered) pendingNotices.set(noticeKey, saved.createdAt);
+          dispatchMode: { type: "steer_active", targetRunId: activeRunId },
+          notificationOnly: true,
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+      if (delivered)
+        pendingNotices.set(noticeKey, { runId: activeRunId, createdAt: saved.createdAt });
       (delivered ? notifiedThreads : skippedThreads).push(threadId);
     }
     return {
@@ -1779,7 +1757,7 @@ const make = Effect.gen(function* () {
           if (request.recipientThreadId === null) return yield* invalidInput();
           if (request.status !== "held" && request.status !== "needs-attention")
             return yield* handling.conflict(current, "generation", request.id);
-          const batchId = `board-resume:${yield* crypto.randomUUIDv4()}`;
+          const batchId = `board-resume:${yield* random.uuidV4()}`;
           const stopReceipts = yield* sql<{
             receipt: number;
           }>`SELECT COALESCE(MAX(rowid),0) AS receipt FROM orchestration_command_receipts WHERE aggregate_kind='thread' AND aggregate_id=${request.recipientThreadId} AND command_type='thread.stop' AND status='accepted'`;

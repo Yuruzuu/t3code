@@ -1,4 +1,5 @@
 import type { BoardAuthor, BoardPost, ThreadId } from "@t3tools/contracts";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { ArrowLeftIcon, HashIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -54,6 +55,8 @@ function isEditableTarget(target: EventTarget | null) {
 }
 
 export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
+  const gt = useGT();
+  const m = useMessages();
   const openAgentThread = useStableCallback((threadId: ThreadId) =>
     model.onOpenAgentThread({ kind: "agent", threadId, projectId: null, title: "", driver: null }),
   );
@@ -67,6 +70,7 @@ export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
   const members = thread?.members ?? [];
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const [atEnd, setAtEnd] = useState(true);
   const previousPostIds = useRef<readonly string[] | null>(null);
   const prependAnchor = useRef<{ postId: string; offset: number } | null>(null);
   const loadingOlder = useRef(false);
@@ -255,7 +259,10 @@ export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
   const minimapItems = posts.map((post, index) => ({
     id: post.id,
     rowIndex: index,
-    userText: `${boardAuthorName(post.author)}: ${boardPostExcerpt(post.text, { includeFirstLine: true })}`,
+    userText: gt("{author}: {excerpt}", {
+      author: boardAuthorName(post.author, m),
+      excerpt: boardPostExcerpt(post.text, { includeFirstLine: true }),
+    }),
     assistantText: null,
   }));
   const joinPostIds = agentJoinPostIds(posts);
@@ -307,6 +314,7 @@ export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
               stickToBottom.current =
                 scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
                 STICK_THRESHOLD_PX;
+              setAtEnd(stickToBottom.current);
               if (loadingOlder.current) capturePrependAnchor();
             }}
             style={{ overflowAnchor: "none" }}
@@ -323,7 +331,7 @@ export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
               <Button variant="ghost" size="xs" className="-ml-2" onClick={model.onCloseThread}>
                 <ArrowLeftIcon aria-hidden="true" />
                 <HashIcon aria-hidden="true" className="-mr-1 opacity-60" />
-                {channelName ?? "Channel"}
+                {channelName ?? gt("Channel", { $context: "Message board channel" })}
               </Button>
               {thread && root && !model.threadPending ? (
                 <>
@@ -356,32 +364,34 @@ export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
                         disabled={model.loadingOlderPosts || !model.isConnected}
                         onClick={loadOlderPosts}
                       >
-                        {model.loadingOlderPosts ? "Loading older replies…" : "Load older replies"}
+                        {model.loadingOlderPosts
+                          ? gt("Loading older replies…")
+                          : gt("Load older replies")}
                       </Button>
                     </div>
                   )}
-                  <ol aria-label="Replies" className="mt-8">
+                  <ol aria-label={gt("Replies")} className="mt-8">
                     {replies}
                   </ol>
                   {model.threadError ? (
-                    <BoardEmptyState title="This discussion couldn't load">
+                    <BoardEmptyState title={gt("This discussion couldn't load")}>
                       {model.threadError}
                     </BoardEmptyState>
                   ) : model.threadPending ? (
-                    <BoardLoading label="Loading replies" />
+                    <BoardLoading label={gt("Loading replies")} />
                   ) : null}
                   <BoardAgentTrails workers={workers} waiting={waiting} listRef={observeWorkers} />
                 </>
               ) : model.threadError ? (
-                <BoardEmptyState title="This discussion couldn't load">
+                <BoardEmptyState title={gt("This discussion couldn't load")}>
                   {model.threadError}
                 </BoardEmptyState>
               ) : !model.isConnected ? (
-                <BoardEmptyState title="You're offline">
-                  This discussion loads when the connection comes back.
+                <BoardEmptyState title={gt("You're offline")}>
+                  <T>This discussion loads when the connection comes back.</T>
                 </BoardEmptyState>
               ) : (
-                <BoardLoading label="Loading discussion" />
+                <BoardLoading label={gt("Loading discussion")} />
               )}
             </div>
           </div>
@@ -390,6 +400,7 @@ export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
               items={minimapItems}
               hasPersistentGutter={gutter.persistent}
               hitStripWidth={gutter.hitWidth}
+              atEnd={atEnd}
               currentIndex={activeIndex === -1 ? null : activeIndex}
               stripMap={stripMap}
               onWheel={(event) => {
@@ -462,13 +473,15 @@ export function BoardThreadDetail({ model }: { model: BoardsViewModel }) {
 }
 
 function BoardSeenBy({ agents }: { agents: readonly Extract<BoardAuthor, { kind: "agent" }>[] }) {
-  const names = agents.map(boardAuthorName).join(", ");
+  const gt = useGT();
+  const m = useMessages();
+  const names = agents.map((agent) => boardAuthorName(agent, m)).join(", ");
   return (
     <span
-      aria-label={`Seen by ${names}`}
+      aria-label={gt("Seen by {names}", { names })}
       className="inline-flex items-center gap-1 text-2xs text-muted-foreground"
     >
-      Seen by
+      <T>Seen by</T>
       <span aria-hidden="true" className="flex -space-x-1">
         {agents.slice(0, 3).map((author) => (
           <BoardAuthorAvatar key={author.threadId} author={author} size="2xs" ring />
@@ -484,12 +497,19 @@ function BoardPostRow({
   joined,
   ...props
 }: Parameters<typeof BoardMessage>[0] & { isNew: boolean; joined: boolean }) {
+  const gt = useGT();
   return (
     <>
       {isNew && (
-        <li role="separator" aria-label="New messages" className="mt-6 flex items-center gap-3">
+        <li
+          role="separator"
+          aria-label={gt("New messages")}
+          className="mt-6 flex items-center gap-3"
+        >
           <span className="h-px flex-1 bg-info/40" />
-          <span className="text-2xs font-medium text-info-foreground">New</span>
+          <span className="text-2xs font-medium text-info-foreground">
+            <T context="Unread message divider">New</T>
+          </span>
           <span className="h-px flex-1 bg-info/40" />
         </li>
       )}
@@ -498,7 +518,12 @@ function BoardPostRow({
           <span className="h-px flex-1 bg-border/60" />
           <span className="inline-flex items-center gap-1.5">
             <BoardAuthorAvatar author={props.post.author} size="2xs" />
-            <BoardAuthorLabel author={props.post.author} /> has joined the discussion
+            <T>
+              <Var>
+                <BoardAuthorLabel author={props.post.author} />
+              </Var>{" "}
+              has joined the discussion
+            </T>
           </span>
           <span className="h-px flex-1 bg-border/60" />
         </li>

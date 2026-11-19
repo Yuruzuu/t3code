@@ -12,7 +12,7 @@ import {
   MessageBoardGetTodoInput,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -78,7 +78,7 @@ const actorKey = (viewer: BoardViewer) =>
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const columns = sql.literal(todoColumns);
   const revision = Effect.fn("MessageBoardTodoStore.revision")(function* (rootId: BoardPostId) {
@@ -180,7 +180,7 @@ export const make = Effect.gen(function* () {
           const assignee =
             action.assigneeThreadId == null ? null : yield* author(action.assigneeThreadId);
           next = {
-            id: yield* crypto.randomUUIDv4(),
+            id: yield* random.uuidV4(),
             rootId,
             text: action.text,
             status: action.status ?? "todo",

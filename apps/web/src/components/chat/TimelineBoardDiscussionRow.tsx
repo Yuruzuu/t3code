@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { BoardPostId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon, HashIcon, MessagesSquareIcon } from "lucide-react";
@@ -26,7 +27,9 @@ export function BoardDiscussionTimelineRow({
         className="group flex w-fit max-w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       >
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 text-muted-foreground">Started a discussion</span>
+        <span className="shrink-0 text-muted-foreground">
+          <T>Started a discussion</T>
+        </span>
         <span className="min-w-0 truncate font-medium text-foreground">{title}</span>
         <span className="inline-flex shrink-0 items-center text-muted-foreground">
           <HashIcon aria-hidden="true" className="size-3.5" />

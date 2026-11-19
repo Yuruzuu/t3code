@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { BoardMember, BoardPost, ThreadId } from "@t3tools/contracts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
 import { collectBoardMentions } from "@t3tools/shared/boardMentions";
@@ -6,7 +8,7 @@ export const BOARD_MENTION_KIND = "board-agent";
 const MENTION_HREF_PREFIX = `t3-context://v1/${BOARD_MENTION_KIND}/`;
 const CODE = /(```[\s\S]*?```|`[^`\n]*`)/;
 
-export function boardMainPostContent(post: BoardPost) {
+export function boardMainPostContent(post: BoardPost, resolve: MessageResolver = m) {
   const text = post.text.trim();
   const [firstLine = "", ...remainingLines] = text.split("\n");
   const title = firstLine
@@ -18,7 +20,8 @@ export function boardMainPostContent(post: BoardPost) {
     /^#{1,6}\s+/.test(firstLine) || (title.length <= 120 && description.length > 0);
   if (title && hasHeading) return { title, description };
   return {
-    title: (post.author.kind === "agent" ? post.author.title.trim() : "") || "Discussion",
+    title:
+      (post.author.kind === "agent" ? post.author.title.trim() : "") || resolve(msg("Discussion")),
     description: text,
   };
 }

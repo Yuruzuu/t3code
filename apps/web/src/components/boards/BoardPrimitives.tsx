@@ -1,3 +1,5 @@
+import { msg, T, useGT, useMessages } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { BoardAuthor } from "@t3tools/contracts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
 import { CornerDownRightIcon, MessagesSquareIcon, UserRoundIcon } from "lucide-react";
@@ -18,12 +20,12 @@ import {
 } from "./BoardOrb";
 import type { BoardWorker } from "./boardsViewModel";
 
-export function boardAuthorName(author: BoardAuthor) {
+export function boardAuthorName(author: BoardAuthor, resolve: MessageResolver = m) {
   return author.kind === "agent"
     ? boardPersona(author.threadId).name
     : author.kind === "system"
-      ? "System"
-      : "You";
+      ? resolve(msg("System"))
+      : resolve(msg("You"));
 }
 
 export function BoardAuthorLabel({
@@ -33,19 +35,20 @@ export function BoardAuthorLabel({
   author: BoardAuthor;
   children?: ReactNode;
 }) {
+  const resolve = useMessages();
   return (
     <span
       style={author.kind === "agent" ? { color: boardAvatarColor(author.threadId) } : undefined}
     >
-      {children ?? boardAuthorName(author)}
+      {children ?? boardAuthorName(author, resolve)}
     </span>
   );
 }
 
-export function boardProviderName(author: BoardAuthor) {
+export function boardProviderName(author: BoardAuthor, resolve: MessageResolver = m) {
   return author.kind === "agent" && author.driver
-    ? (providerClients.get(author.driver)?.label ?? "Agent")
-    : "Agent";
+    ? (providerClients.get(author.driver)?.label ?? resolve(msg("Agent")))
+    : resolve(msg("Agent"));
 }
 
 /** Plain-text preview: markdown markers stripped, whitespace collapsed. */
@@ -123,15 +126,17 @@ export function BoardTimestamp({ value }: { value: string }) {
 }
 
 /** The agent's chosen role, falling back to its provider so every agent has a byline. */
-export function boardAuthorRole(author: BoardAuthor) {
+export function boardAuthorRole(author: BoardAuthor, resolve: MessageResolver = m) {
   if (author.kind !== "agent") return null;
-  return author.role ?? boardProviderName(author);
+  return author.role ?? boardProviderName(author, resolve);
 }
 
 /** "Pip · Reviewer": the agent's chosen role, falling back to its provider. */
-export function boardAuthorByline(author: BoardAuthor) {
-  const role = boardAuthorRole(author);
-  return role === null ? boardAuthorName(author) : `${boardAuthorName(author)} · ${role}`;
+export function boardAuthorByline(author: BoardAuthor, resolve: MessageResolver = m) {
+  const role = boardAuthorRole(author, resolve);
+  return role === null
+    ? boardAuthorName(author, resolve)
+    : `${boardAuthorName(author, resolve)} · ${role}`;
 }
 
 const MAX_WORKER_CHIPS = 3;
@@ -146,20 +151,23 @@ export function BoardWorkingIndicator({
   waiting: boolean;
   className?: string;
 }) {
+  const gt = useGT();
   if (workers.length === 0) {
     if (!waiting) return null;
     return (
       <div role="status" className={cn("flex min-w-0 items-center gap-2", className)}>
         <BoardWaitingOrb size="xs" />
-        <span className="text-xs text-muted-foreground">Waiting…</span>
+        <span className="text-xs text-muted-foreground">
+          <T>Waiting…</T>
+        </span>
       </div>
     );
   }
   const shown = workers.slice(0, MAX_WORKER_CHIPS);
   const label =
     workers.length === 1
-      ? `${boardAuthorName(workers[0]!.author)} is working`
-      : `${workers.length} agents working`;
+      ? gt("{name} is working", { name: boardAuthorName(workers[0]!.author) })
+      : gt("{count} agents working", { count: workers.length });
   return (
     <div role="status" className={cn("flex min-w-0 items-center gap-2", className)}>
       <span aria-hidden="true" className="flex shrink-0 -space-x-1">
@@ -197,9 +205,10 @@ export function BoardAgentTrails({
   waiting: boolean;
   listRef?: Ref<HTMLUListElement>;
 }) {
+  const gt = useGT();
   if (workers.length === 0 && !waiting) return null;
   return (
-    <ul ref={listRef} aria-label="Working now" className="mt-4 space-y-3">
+    <ul ref={listRef} aria-label={gt("Working now")} className="mt-4 space-y-3">
       {workers.map((worker) => (
         <li key={worker.author.threadId} className="flex gap-3">
           <BoardAuthorAvatar author={worker.author} working />
@@ -222,7 +231,9 @@ export function BoardAgentTrails({
       {waiting && (
         <li role="status" className="flex items-center gap-3">
           <BoardWaitingOrb />
-          <p className="text-sm font-semibold text-foreground">Waiting…</p>
+          <p className="text-sm font-semibold text-foreground">
+            <T>Waiting…</T>
+          </p>
         </li>
       )}
     </ul>
@@ -231,9 +242,12 @@ export function BoardAgentTrails({
 
 /** How many new messages something has: a blue circle that stretches for longer numbers. */
 export function BoardUnreadCount({ count }: { count: number }) {
+  const gt = useGT();
   return (
     <span
-      aria-label={`${count} new ${count === 1 ? "message" : "messages"}`}
+      aria-label={gt("{count, plural, one {{count} new message} other {{count} new messages}}", {
+        count,
+      })}
       className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-info px-1 text-3xs font-semibold text-white tabular-nums"
     >
       {count > 99 ? "99+" : count}

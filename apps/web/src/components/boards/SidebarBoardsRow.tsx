@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 import { memo } from "react";
@@ -23,7 +24,9 @@ export const SidebarBoardsRow = memo(function SidebarBoardsRow() {
           }}
         >
           <MessagesSquareIcon />
-          <span className="flex-1">Boards</span>
+          <span className="flex-1">
+            <T>Boards</T>
+          </span>
           {unreadCount > 0 ? <Badge variant="secondary">{unreadCount}</Badge> : null}
         </SidebarMenuButton>
       </SidebarMenuItem>

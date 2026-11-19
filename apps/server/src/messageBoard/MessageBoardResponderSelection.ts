@@ -1,8 +1,7 @@
 import { BoardPost, BoardPostId, CommandId, ThreadId } from "@t3tools/contracts";
 import { boardPersona } from "@t3tools/shared/boardPersona";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
-import * as Hex from "effect/encoding/Hex";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -68,11 +67,11 @@ export const classifyAvailability = Effect.fn(
 
 const makeShared = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const fingerprint = Effect.fn("MessageBoardResponderSelection.fingerprint")(function* (
     value: string,
   ) {
-    return Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(value)));
+    return yield* digest.digestHex(Digest.sha256, new TextEncoder().encode(value));
   });
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const events = yield* HandlingEvents.MessageBoardHandlingEvents;
