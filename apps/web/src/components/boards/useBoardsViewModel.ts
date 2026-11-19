@@ -265,26 +265,26 @@ export function useBoardsViewModel(): BoardsViewModel {
       loadingOlderPosts.current.add(requestKey);
       setOlderPostsRequests(new Set(loadingOlderPosts.current));
       void runAction(async () => {
-        try {
-          requireSuccess(
-            await executeAtomQuery(
-              appAtomRegistry,
-              messageBoardAtoms.detailQuery({
-                environmentId,
-                input: {
-                  rootId: selectedRootId,
-                  limit: boardThreadPageSize,
-                  cursor,
-                },
-              }),
-              { refresh: true },
-            ),
-          );
-        } finally {
+        requireSuccess(
+          await executeAtomQuery(
+            appAtomRegistry,
+            messageBoardAtoms.detailQuery({
+              environmentId,
+              input: {
+                rootId: selectedRootId,
+                limit: boardThreadPageSize,
+                cursor,
+              },
+            }),
+            { refresh: true },
+          ),
+        );
+      })
+        .finally(() => {
           loadingOlderPosts.current.delete(requestKey);
           setOlderPostsRequests(new Set(loadingOlderPosts.current));
-        }
-      }).catch(() => {});
+        })
+        .catch(() => {});
     },
     onSelectChannel: (channel) => updateSearch({ channel, thread: undefined }),
     onSelectThread: (rootId, channelName) =>

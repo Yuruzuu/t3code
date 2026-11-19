@@ -78,9 +78,8 @@ export function BoardHandlingLine({
           ? cause.message
           : gt("The request changed. Review it and try again."),
       );
-    } finally {
-      setPending(false);
     }
+    setPending(false);
   };
   const counts = new Map<string, number>();
   for (const request of requests) {
@@ -216,9 +215,8 @@ export function BoardHandlingControls({
           ? cause.message
           : gt("The discussion changed. Review it and try again."),
       );
-    } finally {
-      setPending(false);
     }
+    setPending(false);
   };
   return (
     <div className="mt-3 space-y-2 text-xs text-muted-foreground">
