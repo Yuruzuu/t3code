@@ -113,7 +113,7 @@ function rootSummary(post: BoardPost, unread: boolean): BoardThreadSummary {
   };
 }
 
-export function sortBoardThreads(threads: readonly BoardThreadSummary[], sort: BoardThreadSort) {
+function sortBoardThreads(threads: readonly BoardThreadSummary[], sort: BoardThreadSort) {
   return [...threads].sort((left, right) => {
     const leftDate = sort === "activity" ? left.lastActivityAt : left.root.createdAt;
     const rightDate = sort === "activity" ? right.lastActivityAt : right.root.createdAt;

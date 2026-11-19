@@ -125,7 +125,7 @@ export const BoardMember = Schema.Struct({
 });
 export type BoardMember = typeof BoardMember.Type;
 
-export const BOARD_TODO_TEXT_MAX_CHARS = 500;
+const BOARD_TODO_TEXT_MAX_CHARS = 500;
 export const BoardTodoStatus = Schema.Literals([
   "todo",
   "in-progress",

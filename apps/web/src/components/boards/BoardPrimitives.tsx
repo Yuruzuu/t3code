@@ -45,7 +45,7 @@ export function BoardAuthorLabel({
   );
 }
 
-export function boardProviderName(author: BoardAuthor, resolve: MessageResolver = m) {
+function boardProviderName(author: BoardAuthor, resolve: MessageResolver = m) {
   return author.kind === "agent" && author.driver
     ? (providerClients.get(author.driver)?.label ?? resolve(msg("Agent")))
     : resolve(msg("Agent"));
