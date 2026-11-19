@@ -26,7 +26,6 @@ import {
   mergeBoardThreadPage,
 } from "./cache.ts";
 
-export { applyBoardEvent, boardPageKey, emptyBoardCache } from "./cache.ts";
 export type { BoardCache } from "./cache.ts";
 
 export const boardThreadPageSize = 40;
